@@ -143,6 +143,33 @@ fn write_json(store: &mut Memory, id: &str, value: &impl Serialize) -> io::Resul
     store.insert(id, &bytes)
 }
 
+fn journal_sequences(root: &Path) -> io::Result<Vec<u64>> {
+    let mut events = Vec::new();
+    let mut receipts = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        for (prefix, sequences) in [("event", &mut events), ("receipt", &mut receipts)] {
+            if let Some(suffix) = name.strip_prefix(&format!("{prefix}-")) {
+                let sequence = suffix
+                    .parse::<u64>()
+                    .map_err(|_| invalid("invalid journal record name"))?;
+                if sequence == 0 || name != key(prefix, sequence) {
+                    return Err(invalid("noncanonical journal record name"));
+                }
+                sequences.push(sequence);
+            }
+        }
+    }
+    events.sort_unstable();
+    if receipts
+        .iter()
+        .any(|sequence| events.binary_search(sequence).is_err())
+    {
+        return Err(invalid("receipt has no checkpoint"));
+    }
+    Ok(events)
+}
+
 impl Monitor {
     /// `journal_root` must be an application-owned directory dedicated to this branch and run.
     pub fn open(
@@ -175,30 +202,20 @@ impl Monitor {
         }
         let root = journal_root.as_ref();
         let mut journal = Memory::open(root)?;
+        let sequences = journal_sequences(root)?;
         match read_json::<BranchSpec>(&journal, "spec") {
             Ok(saved) if saved != spec => {
                 return Err(invalid("branch contract changed; use a new journal"));
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if !sequences.is_empty() {
+                    return Err(invalid("checkpoint history has no branch contract"));
+                }
                 write_json(&mut journal, "spec", &spec)?
             }
             Err(error) => return Err(error),
         }
-        let mut sequences = Vec::new();
-        for entry in fs::read_dir(root)? {
-            let name = entry?.file_name().to_string_lossy().into_owned();
-            if let Some(suffix) = name.strip_prefix("event-") {
-                let sequence = suffix
-                    .parse::<u64>()
-                    .map_err(|_| invalid("invalid checkpoint name"))?;
-                if name != key("event", sequence) {
-                    return Err(invalid("noncanonical checkpoint name"));
-                }
-                sequences.push(sequence);
-            }
-        }
-        sequences.sort_unstable();
         let mut branch = Branch::new(spec.max_corrections);
         let mut seen = HashMap::new();
         let mut stopped = false;

@@ -463,3 +463,60 @@ fn concurrent_monitor_handles_cannot_issue_two_controls_for_the_same_sequence() 
     assert_eq!(control.calls.lock().unwrap().len(), 1);
     assert_eq!(first.record(1).unwrap().input.observation.call_id, "first");
 }
+
+#[test]
+fn orphan_receipts_and_missing_contracts_are_not_treated_as_a_fresh_run() {
+    for removed in ["spec", "event-00000000000000000001"] {
+        let root = TestDir::new();
+        let control = Control::new(&root);
+        let mut judge = Script::signals(&[Signal::Misaligned]);
+        open(&root, spec())
+            .on_event(&event("one"), &mut judge, &control)
+            .unwrap();
+        fs::remove_file(root.path.join("journal").join(removed)).unwrap();
+        let result = Monitor::open(
+            spec(),
+            &member(),
+            Memory::open(root.path.join("sources")).unwrap(),
+            root.path.join("journal"),
+        );
+        assert!(
+            matches!(result, Err(error) if error.kind() == io::ErrorKind::InvalidData),
+            "lost {removed} must require reconciliation"
+        );
+        assert_eq!(control.calls.lock().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn invalid_and_orphan_receipt_names_are_rejected_before_replay() {
+    for name in [
+        "receipt-bad",
+        "receipt-1",
+        "receipt-00000000000000000000",
+        "receipt-00000000000000000002",
+    ] {
+        let root = TestDir::new();
+        let control = Control::new(&root);
+        let mut judge = Script::signals(&[Signal::Aligned]);
+        open(&root, spec())
+            .on_event(&event("one"), &mut judge, &control)
+            .unwrap();
+        fs::write(
+            root.path.join("journal").join(name),
+            br#"{"acknowledged":true}"#,
+        )
+        .unwrap();
+        let result = Monitor::open(
+            spec(),
+            &member(),
+            Memory::open(root.path.join("sources")).unwrap(),
+            root.path.join("journal"),
+        );
+        assert!(
+            matches!(result, Err(error) if error.kind() == io::ErrorKind::InvalidData),
+            "accepted {name}"
+        );
+        assert!(control.calls.lock().unwrap().is_empty());
+    }
+}
