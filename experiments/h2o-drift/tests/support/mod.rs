@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 pub struct TestDir {
     pub path: PathBuf,
@@ -7,7 +11,12 @@ pub struct TestDir {
 
 impl TestDir {
     pub fn new() -> Self {
-        let parent = std::env::temp_dir().canonicalize().unwrap();
+        Self::new_in(std::env::temp_dir())
+    }
+
+    pub fn new_in(parent: impl AsRef<Path>) -> Self {
+        fs::create_dir_all(parent.as_ref()).unwrap();
+        let parent = parent.as_ref().canonicalize().unwrap();
         let nonce = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
