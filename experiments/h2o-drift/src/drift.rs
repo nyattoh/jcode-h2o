@@ -1,18 +1,20 @@
-//! Pure branch control; a Jev transport and runtime integration are not yet implemented.
+//! Pure branch control. The optional monitor module adapts SDK events; no Jev transport is included.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "sdk", derive(serde::Serialize, serde::Deserialize))]
 pub enum Signal {
     Aligned,
     Misaligned,
     Unknown,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "sdk", derive(serde::Serialize, serde::Deserialize))]
 pub enum Decision {
     Continue,
     Correct,
     StopBranch,
     Hold,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Branch {
     remaining_corrections: u32,
     correcting: bool,
