@@ -162,3 +162,35 @@ fn open_reports_a_file_used_as_a_directory() {
     assert!(Memory::open(&file).is_err());
     assert_eq!(fs::read(file).unwrap(), b"unchanged");
 }
+
+#[cfg(windows)]
+#[test]
+fn device_ids_are_rejected_by_every_operation_but_similar_regular_ids_work() {
+    let root = TestDir::new();
+    let mut memory = Memory::open(&root.path).unwrap();
+    let mut reserved: Vec<String> = ["con", "PRN", "Aux", "NuL"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    for number in 1..=9 {
+        reserved.extend([format!("COM{number}"), format!("lpt{number}")]);
+    }
+    for id in &reserved {
+        assert_eq!(
+            memory.insert(id, b"data").unwrap_err().kind(),
+            ErrorKind::InvalidInput
+        );
+        assert_eq!(memory.get(id).unwrap_err().kind(), ErrorKind::InvalidInput);
+        for phase in [Phase::Ice, Phase::Water, Phase::Vapour] {
+            assert_eq!(
+                memory.transition(id, phase).unwrap_err().kind(),
+                ErrorKind::InvalidInput
+            );
+        }
+    }
+    assert_eq!(fs::read_dir(&root.path).unwrap().count(), 0);
+    for id in ["CONSOLE", "auxiliary", "NUL_", "COM10", "LPT10"] {
+        memory.insert(id, b"original").unwrap();
+        assert_eq!(memory.get(id).unwrap(), b"original");
+    }
+}

@@ -11,6 +11,17 @@ use std::{
 const PENDING_PREFIX: &str = ".h2o-pending-";
 static NEXT_PENDING: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(windows)]
+fn is_windows_device_id(id: &str) -> bool {
+    let name = id.to_ascii_uppercase();
+    matches!(name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            name.strip_prefix(prefix).is_some_and(|suffix| {
+                suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9')
+            })
+        })
+}
+
 struct PendingFile(PathBuf);
 
 impl PendingFile {
@@ -82,6 +93,13 @@ impl Memory {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid memory ID",
+            ));
+        }
+        #[cfg(windows)]
+        if is_windows_device_id(id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "reserved Windows device ID",
             ));
         }
         Ok(self.root.join(id))
@@ -165,6 +183,21 @@ mod persistence_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn reserved_device_names_are_rejected_before_any_file_operation() {
+        let memory = Memory::open(std::env::temp_dir()).unwrap();
+        for id in [
+            "CON", "con", "NUL", "nul", "PrN", "AUX", "COM1", "com9", "LPT1", "lpt9",
+        ] {
+            assert_eq!(
+                memory.path(id).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput,
+                "accepted {id}"
+            );
+        }
+    }
     #[test]
     fn transitions_restore_exact_bytes_and_reopen() {
         let root = std::env::temp_dir().join(format!(

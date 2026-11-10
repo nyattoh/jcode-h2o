@@ -65,3 +65,16 @@ Attach応答より先に届くToolDoneを購読できること、模擬peerが�
 
 4 checkpointの全81列を予算0〜2で確認し、各step前にjournalを再openした。再openそのものや重複通知で制御を繰り返さず、unknownや復帰の後も消費済み予算が維持されることを確認した。
 対象1件は成功（243履歴、exit 0）。これは同一プロセス内での全列検査であり、実子プロセスのkill試験とは別の証拠である。
+
+## Windowsの予約名
+
+[Microsoftの命名仕様](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)で、標準の予約デバイス名と通常のファイル名を区別する必要を確認した。
+従来のASCII英数字・ハイフン・下線だけの検査では `CON` 等もpath変換を通っていた。
+
+- RED：privateなpath検査だけを呼び、予約名が受理されて1件失敗（exit 1）。実デバイスを開く試験はしていない。
+- 修正：Windows上ではCON/PRN/AUX/NUL、COM1〜9、LPT1〜9を大文字小文字によらず、file API呼出し前にInvalidInputで拒否する。
+- 追加試験：全操作での拒否、似た通常ID（CONSOLE、COM10等）の保存・復元を確認した。
+- GREEN：SDK無効の全24件が成功、失敗0、exit 0。
+
+互換性に関する仮定として、この制限はWindowsだけに適用する。他OSでの既存の名前を一律に拒否する変更は加えない。
+大文字小文字の扱いを異なるFS間で統一するID仕様、最大長、攻撃者が変更できる保存先の防御は、この修正で保証していない。
