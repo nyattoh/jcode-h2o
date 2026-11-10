@@ -520,3 +520,31 @@ fn invalid_and_orphan_receipt_names_are_rejected_before_replay() {
         assert!(control.calls.lock().unwrap().is_empty());
     }
 }
+
+#[test]
+fn a_reused_call_id_with_changed_observation_is_not_silently_deduplicated() {
+    let root = TestDir::new();
+    let control = Control::new(&root);
+    let mut judge = Script::signals(&[Signal::Misaligned]);
+    open(&root, spec())
+        .on_event(&event("same"), &mut judge, &control)
+        .unwrap();
+    let mut changed = event("same");
+    if let ApiEvent::ToolDone { output, .. } = &mut changed {
+        *output = "different result for the same call".into();
+    }
+    let mut monitor = open(&root, spec());
+    assert_eq!(
+        monitor
+            .on_event(&changed, &mut judge, &control)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::InvalidData
+    );
+    assert_eq!(judge.inputs.len(), 1);
+    assert_eq!(control.calls.lock().unwrap().len(), 1);
+    assert_eq!(
+        monitor.record(1).unwrap().input.observation.output,
+        "Observed fixture result"
+    );
+}

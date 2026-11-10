@@ -307,7 +307,13 @@ impl Monitor {
                 "control result uncertain; reconcile before continuing",
             ));
         }
-        if self.stopped || self.seen.contains_key(&observation.call_id) {
+        if let Some(sequence) = self.seen.get(&observation.call_id) {
+            if self.record(*sequence)?.input.observation != observation {
+                return Err(invalid("call ID reused with a different observation"));
+            }
+            return Ok(None);
+        }
+        if self.stopped {
             return Ok(None);
         }
         if observation.call_id.trim().is_empty() {
