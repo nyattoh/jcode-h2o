@@ -49,7 +49,7 @@ OSの一時ディレクトリとworkspaceのtarget配下を交互に用いる。
 最大同時子プロセス数は4。通常の試験からは除外し、明示的に `--ignored` で実行する。プロセスfixtureも同じ除外方法を使うため、通常試験のignored数には長時間試験自体も含まれる。
 
 最初の長時間実行のseed式は終了対象がwriter 0に固定される性質を持つ。その実行はwriter 0中断のstressとして記録し、writer 1/2の中断の証拠としない。
-長時間実行の終了結果と、終了対象の選択を分けた追加試験の結果は、完了後に追記する。
+この実行の終了結果は後述の「長時間実行の確定結果」に記す。
 
 終了対象の選択はcase数のmoduloで0/1/2を巡回するように補強した。killを要求した回数と、対象プロセスの非正常終了を観測した回数も分けて記録する。
 その追加実行はrelease構成で180.13秒、978ケース、readerの確認149,388回、失敗0・exit 0。
@@ -78,3 +78,39 @@ Attach応答より先に届くToolDoneを購読できること、模擬peerが�
 
 互換性に関する仮定として、この制限はWindowsだけに適用する。他OSでの既存の名前を一律に拒否する変更は加えない。
 大文字小文字の扱いを異なるFS間で統一するID仕様、最大長、攻撃者が変更できる保存先の防御は、この修正で保証していない。
+
+## 最終コードの通常試験
+
+Windows予約名の修正後に全試験を確認した。
+
+- SDK有効・debug：47件成功、失敗0、exit 0。
+- SDK有効・release：47件成功、失敗0、exit 0。
+- SDK無効・debug：24件成功、失敗0、exit 0。
+- SDK有効のignored 4件は、親から明示起動するfixture 3件と、別途明示実行した長時間試験1件。SDK無効ではfixture 2件と長時間試験1件となる。
+- 複数構成の同じ試験を合算して、独立した機能の件数や実利用の成功件数とはしない。
+
+通常試験の実行ログはworkspaceの `target/h2o-final-debug.log` と `target/h2o-final-release.log` に保存した。
+これらは追跡対象外のローカル証拠であり、Gitで共有する検証条件と結果はこの文書へ要約する。
+受入条件との対応は [ACCEPTANCE_MATRIX.md](ACCEPTANCE_MATRIX.md)、ルーターと監視の分離は [CONTROL_BOUNDARIES.md](CONTROL_BOUNDARIES.md) を参照。
+
+## 長時間実行の確定結果
+
+- writer 0を終了対象とした初回実行：release、1800.13秒、9,945ケース、reader確認2,340,366回、失敗0・exit 0。
+- 作成を試みたpayloadの論理byte数合計：1,344,312,234。OSの物理I/O量、メモリ量、帯域や速度改善の測定ではない。
+- 使用ソース：`9349480559959035f5cf4bb2c69bd336640b6b8e`。終了対象が固定である点を隠さず、3 writer全てを同じ回数killした結果とは扱わない。
+- 終了対象を0/1/2へ分けた追加180秒実行：978ケース、reader確認149,388回、失敗0・exit 0。対応ソースは `f679d5957627f5a56f709ef2054def5fe1b59d0c`。
+- 最新コードの通常試験47/47/24件はWindows予約名の修正を含む `e1a8f9a1f0a8491a786649b502327d5fbc8d77dc` に対応する。長時間試験を最新コードの全入力の試験として読み替えない。
+
+生ログは `target/h2o-storage-soak.log` と `target/h2o-storage-soak-diverse.log` に保存した。
+再現コマンドはREADMEにあり、前者は時間を1800秒にし、指定した過去commitのtest harnessを用いる。
+今回のホストは `x86_64-pc-windows-msvc`、rustc 1.99.0（b940084d7、2026-09-28）、Cargo 1.99.0（5f94df478、2026-08-27）。
+ローカル `experiments/h2o-drift/Cargo.lock` のSHA-256は `958CF645B93C83ADF736400D43ABED27C2905152951E26BC76E581CE21A74457`。
+このlockは既存のignore規則どおり追跡対象外であり、clean環境の依存解決が常に同じとは保証しない。
+
+## hand_over_summary
+
+第2〜3段階の補強を完了。journalの欠損・孤立応答、同じcall IDの異なる観測、Windows予約デバイス名の受理を修正し、通常試験と追加反例試験を通した。
+第4段階の受付・bot設定・通信は未着手。実daemon、実Swarm scheduler、実Jev、実利用の改善、RSS・電力・費用はunknownのまま。
+履歴欠損で予算を初期化しない、観測IDの矛盾を無視しない、Windows以外の既存IDへ予約名制限を広げない、という仮定を採用した。
+ルーターとJev監視は分離し、モデル・effortの自動変更やSemEvolveの方策更新は追加していない。
+共通設定とscriptsは未変更。ここで第4段階の手前として停止し、Kotaの次の判断を待つ。

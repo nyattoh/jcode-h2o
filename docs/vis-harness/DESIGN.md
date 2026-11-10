@@ -7,6 +7,9 @@
 第2段階の保存契約・実装・試験・限界は [STAGE02.md](STAGE02.md) を参照する。
 以下の初期設計にある未実装事項のうち、原文の同時公開とプロセス中断の扱いを同段階で追加した。
 第3段階のSDK境界の模擬監視・履歴保存・未検証範囲は [STAGE03.md](STAGE03.md) を参照する。
+追加承認後の補強は [STAGE03_REINFORCEMENT.md](STAGE03_REINFORCEMENT.md)、
+ルーターと監視の分離は [CONTROL_BOUNDARIES.md](CONTROL_BOUNDARIES.md)、
+要求と検証境界の対応は [ACCEPTANCE_MATRIX.md](ACCEPTANCE_MATRIX.md) に整理した。
 
 ```mermaid
 flowchart TD
