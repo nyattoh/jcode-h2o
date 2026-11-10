@@ -1,6 +1,11 @@
 # 設計案と実装状況
 
-基点: JCode `f60280ebc49395f077975e7408fc3fe8759f02d1`。このチェックアウトは上流のローカルクローンであり、GitHub上のforkではない。
+基点: JCode `f60280ebc49395f077975e7408fc3fe8759f02d1`。
+2026-11-10 decision01時点でKotaのfork（origin: nyattoh/jcode、upstream: 1jehuang/jcode）へ移行済み。
+作業先は `h2o-prototype`。公開・リリース・upstreamへのPRは承認範囲外。
+
+第2段階の保存契約・実装・試験・限界は [STAGE02.md](STAGE02.md) を参照する。
+以下の初期設計にある未実装事項のうち、原文の同時公開とプロセス中断の扱いを同段階で追加した。
 
 ```mermaid
 flowchart TD
@@ -35,7 +40,7 @@ JCode SDKの`CreateSessionOptions.working_dir`は任意だが、省略時はrunt
 
 ## 次の作業
 
-1. 本人のGitHubにforkを作り、上流追跡と作業ブランチを確立する。
+1. fork・上流追跡・作業ブランチは確立済み（decision01）。
 2. H₂O実装の実際の契約と保存方法を精読し、差異を埋める。原本への同時書込みと障害復旧を実装する。
 3. JCode SDKとイベントの境界に監視を接続。Jevの本物の応答検査、タイムアウト、データ送信制御とテストを追加する。
 4. 受付画面、bot設定とadapter、SemEvolve通信を実装し、実接続を試験する。

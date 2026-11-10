@@ -1,16 +1,59 @@
 //! A minimal file-backed, reversible working-set prototype.
 use std::{
     collections::HashMap,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
+
+const PENDING_PREFIX: &str = ".h2o-pending-";
+static NEXT_PENDING: AtomicU64 = AtomicU64::new(0);
+
+struct PendingFile(PathBuf);
+
+impl PendingFile {
+    fn create(root: &Path) -> io::Result<(Self, File)> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_nanos();
+        loop {
+            let sequence = NEXT_PENDING.fetch_add(1, Ordering::Relaxed);
+            let path = root.join(format!(
+                "{PENDING_PREFIX}{}-{timestamp}-{sequence}",
+                std::process::id()
+            ));
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => return Ok((Self(path), file)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+impl Drop for PendingFile {
+    fn drop(&mut self) {
+        // Only this writer's staging name is removed. A failed cleanup is visible via pending_files.
+        let _ = fs::remove_file(&self.0);
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Phase {
     Ice,
     Water,
     Vapour,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommitPoint {
+    Created,
+    Written,
+    Synced,
+    Published,
 }
 
 /// Source bytes are stored on disk before they may be held in the cache.
@@ -44,18 +87,50 @@ impl Memory {
         Ok(self.root.join(id))
     }
     pub fn insert(&mut self, id: &str, original: &[u8]) -> io::Result<()> {
+        self.insert_observed(id, original, |_| Ok(()))
+    }
+    fn insert_observed(
+        &mut self,
+        id: &str,
+        original: &[u8],
+        mut observe: impl FnMut(CommitPoint) -> io::Result<()>,
+    ) -> io::Result<()> {
         let path = self.path(id)?;
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        if let Err(e) = f.write_all(original).and_then(|_| f.sync_all()) {
-            drop(f);
-            let _ = fs::remove_file(path);
-            return Err(e);
-        }
+        let (pending, mut f) = PendingFile::create(&self.root)?;
+        let result: io::Result<()> = (|| {
+            observe(CommitPoint::Created)?;
+            for chunk in original.chunks(64 * 1024) {
+                f.write_all(chunk)?;
+                observe(CommitPoint::Written)?;
+            }
+            f.sync_all()?;
+            observe(CommitPoint::Synced)?;
+            Ok(())
+        })();
+        drop(f);
+        result?;
+        // Same-filesystem hard links publish complete bytes without replacing an existing ID.
+        // Unsupported filesystems fail here; never fall back to an overwriting rename or copy.
+        fs::hard_link(&pending.0, &path)?;
+        observe(CommitPoint::Published)?;
         self.phases.insert(id.to_owned(), Phase::Vapour);
         Ok(())
+    }
+    /// Unpublished or leftover staging names. May belong to live writers; never delete automatically.
+    pub fn pending_files(&self) -> io::Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(PENDING_PREFIX)
+            {
+                paths.push(entry.path());
+            }
+        }
+        paths.sort();
+        Ok(paths)
     }
     pub fn transition(&mut self, id: &str, phase: Phase) -> io::Result<()> {
         let path = self.path(id)?;
@@ -83,6 +158,9 @@ impl Memory {
         self.cache.values().map(Vec::len).sum()
     }
 }
+
+#[cfg(test)]
+mod persistence_tests;
 
 #[cfg(test)]
 mod tests {
