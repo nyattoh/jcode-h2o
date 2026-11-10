@@ -42,7 +42,7 @@ SDKのOkは要求の受付応答であり、workerが要求を理解して再計
 方向の相違は導入していないが、次の点は未到達である。
 
 - 誰に任せるかの判断、その評価・改善、Hermesのmodel_mapを参考にした束ね方は未実装。
-- 確認した `AgentsConfig` はモデル選択のallowlistとworkerの `swarm_effort` を分けており、workerごとに任意のeffortを束ねられるとは未確認。自動effort調整が既にあるとは扱わない。
+- `AgentsConfig` はモデル選択のallowlistとworkerの `swarm_effort` を分ける。追加のコード読取りで、低水準CommSpawnは個別effortを受け取る一方、モデル向けSwarmツールは指定を転送しないと確認した。公開SDKで束を適用する経路や自動調整の実動作は未検証。詳細は [制御境界の設計](CONTROL_BOUNDARIES.md) を参照。
 - H₂O元実装の派生表現・索引・自動相遷移を移植していない。選択する原文IDは呼出側が指定する。
 - SemEvolveが評価結果から方策を改善する接続は未実装。既存研究DBや承認状態は変更していない。
 

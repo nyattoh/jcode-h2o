@@ -92,6 +92,8 @@ struct Peer {
     stop: Sender<Vec<u8>>,
     owner: Arc<Mutex<String>>,
     fail_actions: Arc<Mutex<bool>>,
+    drop_action_replies: Arc<Mutex<bool>>,
+    hydration: Arc<Mutex<Vec<ApiEvent>>>,
     requests: Arc<Mutex<Vec<ApiRequest>>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -102,6 +104,8 @@ impl Peer {
         let (to_server, server_rx) = channel();
         let owner = Arc::new(Mutex::new("root".to_string()));
         let fail_actions = Arc::new(Mutex::new(false));
+        let drop_action_replies = Arc::new(Mutex::new(false));
+        let hydration = Arc::new(Mutex::new(Vec::<ApiEvent>::new()));
         let requests = Arc::new(Mutex::new(vec![]));
         let (server_owner, server_fail, server_requests, replies) = (
             owner.clone(),
@@ -109,12 +113,25 @@ impl Peer {
             requests.clone(),
             to_client.clone(),
         );
+        let server_drop_replies = drop_action_replies.clone();
+        let server_hydration = hydration.clone();
         let worker = thread::spawn(move || {
             let mut reader = BufReader::new(ChannelReader {
                 rx: server_rx,
                 current: Cursor::new(vec![]),
             });
             while let Ok(frame) = read_frame::<_, ClientFrame>(&mut reader) {
+                let is_action = matches!(
+                    &frame.request,
+                    ApiRequest::Cancel { .. } | ApiRequest::SoftInterrupt { .. }
+                );
+                if matches!(&frame.request, ApiRequest::AttachSession { .. }) {
+                    for event in server_hydration.lock().unwrap().drain(..) {
+                        let mut bytes = vec![];
+                        write_frame(&mut bytes, &ServerFrame::event(event)).unwrap();
+                        replies.send(bytes).unwrap();
+                    }
+                }
                 let reply = match &frame.request {
                     ApiRequest::Hello { .. } => ApiEvent::HelloOk {
                         version: API_VERSION_MAJOR,
@@ -143,6 +160,9 @@ impl Peer {
                     ),
                 };
                 server_requests.lock().unwrap().push(frame.request);
+                if is_action && *server_drop_replies.lock().unwrap() {
+                    continue;
+                }
                 let mut bytes = vec![];
                 write_frame(&mut bytes, &ServerFrame::reply(frame.id, reply)).unwrap();
                 if replies.send(bytes).is_err() {
@@ -169,6 +189,8 @@ impl Peer {
             stop: to_server,
             owner,
             fail_actions,
+            drop_action_replies,
+            hydration,
             requests,
             worker: Some(worker),
         }
@@ -394,4 +416,54 @@ fn idle_timeout_is_not_failure_but_disconnection_is_unknown_and_uncertain() {
     assert_eq!(record.decision, Decision::Hold);
     assert!(monitor.monitor().needs_reconciliation());
     assert_eq!(judge.calls, 0);
+}
+
+#[test]
+fn tools_hydrated_before_attach_reply_are_not_lost() {
+    let root = TestDir::new();
+    let peer = Peer::new();
+    peer.hydration.lock().unwrap().push(ApiEvent::ToolDone {
+        session_id: "worker-a".into(),
+        call_id: "hydrated".into(),
+        name: "fixture-test".into(),
+        output: "observed before attach completed".into(),
+        error: None,
+    });
+    let mut monitor = peer.attach(&root);
+    let mut judge = MockJudge {
+        answers: [Ok(Signal::Aligned)].into(),
+        calls: 0,
+    };
+    assert_eq!(
+        next(&mut monitor, &mut judge).input.observation.call_id,
+        "hydrated"
+    );
+    assert_eq!(judge.calls, 1);
+}
+
+#[test]
+fn lost_control_acknowledgement_times_out_without_automatic_retransmission() {
+    let root = TestDir::new();
+    let peer = Peer::new();
+    *peer.drop_action_replies.lock().unwrap() = true;
+    let mut monitor = peer.attach(&root);
+    let mut judge = MockJudge {
+        answers: [Ok(Signal::Misaligned)].into(),
+        calls: 0,
+    };
+    peer.tool("one", "worker-a");
+    assert_eq!(next(&mut monitor, &mut judge).decision, Decision::Correct);
+    assert!(monitor.monitor().needs_reconciliation());
+    drop(monitor);
+    let reopened = peer.attach(&root);
+    assert!(reopened.monitor().needs_reconciliation());
+    assert_eq!(
+        peer.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| matches!(r, ApiRequest::SoftInterrupt { .. }))
+            .count(),
+        1
+    );
 }

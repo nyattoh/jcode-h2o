@@ -91,6 +91,8 @@ fn concurrent_publication_soak() {
     let mut cases = 0u64;
     let mut read_probes = 0u64;
     let mut attempted_payload_bytes = 0u64;
+    let mut kill_attempts = [0u64; 3];
+    let mut forced_exits = [0u64; 3];
     let mut last_report = Instant::now();
     while start.elapsed() < duration {
         let seed = 0x9e37_79b9u64.wrapping_mul(cases + 1);
@@ -109,9 +111,19 @@ fn concurrent_publication_soak() {
         }
         fs::write(root.path.join("go"), []).unwrap();
         thread::sleep(Duration::from_micros(seed % 3000));
-        let killed = (seed % 3) as usize;
-        let _ = writers[killed].0.kill();
-        let _ = writers[killed].0.wait();
+        let killed = (cases % 3) as usize;
+        kill_attempts[killed] += 1;
+        if let Some(status) = writers[killed].0.try_wait().unwrap() {
+            assert!(status.success(), "selected writer failed before kill");
+        } else {
+            let requested = writers[killed].0.kill().is_ok();
+            let status = writers[killed].0.wait().unwrap();
+            if requested && !status.success() {
+                forced_exits[killed] += 1;
+            } else {
+                assert!(status.success(), "selected writer failed without kill");
+            }
+        }
         for (index, writer) in writers.iter_mut().enumerate() {
             if index != killed {
                 writer.finish();
@@ -149,7 +161,7 @@ fn concurrent_publication_soak() {
         cases += 1;
         if last_report.elapsed() >= Duration::from_secs(30) {
             println!(
-                "soak progress: cases={cases}, read_probes={read_probes}, attempted_payload_bytes={attempted_payload_bytes}, elapsed_seconds={:.1}",
+                "soak progress: cases={cases}, read_probes={read_probes}, attempted_payload_bytes={attempted_payload_bytes}, kill_attempts={kill_attempts:?}, forced_exits={forced_exits:?}, elapsed_seconds={:.1}",
                 start.elapsed().as_secs_f64()
             );
             last_report = Instant::now();
@@ -158,7 +170,7 @@ fn concurrent_publication_soak() {
     }
     assert!(cases > 0);
     println!(
-        "soak complete: cases={cases}, read_probes={read_probes}, attempted_payload_bytes={attempted_payload_bytes}, elapsed_seconds={:.1}",
+        "soak complete: cases={cases}, read_probes={read_probes}, attempted_payload_bytes={attempted_payload_bytes}, kill_attempts={kill_attempts:?}, forced_exits={forced_exits:?}, elapsed_seconds={:.1}",
         start.elapsed().as_secs_f64()
     );
 }

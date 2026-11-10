@@ -548,3 +548,68 @@ fn a_reused_call_id_with_changed_observation_is_not_silently_deduplicated() {
         "Observed fixture result"
     );
 }
+
+#[test]
+fn every_four_checkpoint_history_keeps_its_budget_when_reopened_after_each_step() {
+    const SIGNALS: [Signal; 3] = [Signal::Aligned, Signal::Misaligned, Signal::Unknown];
+    for encoded in 0..3usize.pow(4) {
+        for budget in 0..=2 {
+            let root = TestDir::new();
+            let control = Control::new(&root);
+            let mut contract = spec();
+            contract.max_corrections = budget;
+            let mut code = encoded;
+            let mut deviations = 0;
+            let mut stopped = false;
+            let mut recorded = 0;
+            let mut previous: Option<String> = None;
+            for step in 0..4 {
+                let signal = SIGNALS[code % 3];
+                code /= 3;
+                let before = control.calls.lock().unwrap().len();
+                let mut monitor = open(&root, contract.clone());
+                assert_eq!(
+                    control.calls.lock().unwrap().len(),
+                    before,
+                    "reopen must not repeat a control"
+                );
+                if let Some(id) = &previous {
+                    assert!(
+                        monitor
+                            .on_event(&event(id), &mut Script::signals(&[]), &control)
+                            .unwrap()
+                            .is_none()
+                    );
+                }
+                let id = format!("step-{step}");
+                let mut judge = Script::signals(&[signal]);
+                let record = monitor.on_event(&event(&id), &mut judge, &control).unwrap();
+                if stopped {
+                    assert!(record.is_none());
+                    assert!(judge.inputs.is_empty());
+                } else {
+                    deviations += u32::from(signal == Signal::Misaligned);
+                    let expected = if deviations > budget {
+                        Decision::StopBranch
+                    } else {
+                        match signal {
+                            Signal::Aligned => Decision::Continue,
+                            Signal::Misaligned => Decision::Correct,
+                            Signal::Unknown => Decision::Hold,
+                        }
+                    };
+                    assert_eq!(
+                        record.unwrap().decision,
+                        expected,
+                        "history={encoded}, budget={budget}, step={step}"
+                    );
+                    recorded += 1;
+                    stopped = expected == Decision::StopBranch;
+                    previous = Some(id);
+                }
+                assert_eq!(monitor.checkpoint_count(), recorded);
+                assert!(!monitor.needs_reconciliation());
+            }
+        }
+    }
+}

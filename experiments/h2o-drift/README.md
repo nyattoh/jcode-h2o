@@ -43,4 +43,17 @@ Swarm上の枝停止・履歴保持、実daemon、実bot、SemEvolve、外部サ
 第3段階のSDK境界の模擬監視・再現コマンド・検証範囲は
 [`STAGE03.md`](../../docs/vis-harness/STAGE03.md)を参照する。
 SDK接続を含む試験は同じコマンドに `--features sdk` を追加する。
+追加承認後の反例試験・プロセス中断・長時間試験は
+[`STAGE03_REINFORCEMENT.md`](../../docs/vis-harness/STAGE03_REINFORCEMENT.md)、
+ルーターと監視の設計境界は
+[`CONTROL_BOUNDARIES.md`](../../docs/vis-harness/CONTROL_BOUNDARIES.md)を参照する。
+
+長時間の公開API競合試験は通常のsuiteから除外している。専用PowerShellプロセスで明示的に実行する。
+時間は1〜1800秒に制限し、初期値は5秒。read probe数とpayload byte数はRSS・OS物理I/O・性能評価ではない。
+
+```powershell
+$env:RUSTC_WRAPPER=''
+$env:H2O_SOAK_SECONDS='180'
+cargo test --offline --release --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-storage-soak --test storage_soak concurrent_publication_soak -- --ignored --nocapture
+```
 独立workspaceの継続を提案し、本体への接続段階でworkspace追加の要否を再評価する。
