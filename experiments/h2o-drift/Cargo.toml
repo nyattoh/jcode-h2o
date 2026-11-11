@@ -9,8 +9,15 @@ publish = false
 [features]
 default = []
 sdk = ["dep:jcode-sdk", "dep:serde", "dep:serde_json"]
+jev = ["sdk", "dep:ureq"]
 
 [dependencies]
 jcode-sdk = { path = "../../crates/jcode-sdk", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+ureq = { version = "=3.1.4", default-features = false, features = ["rustls"], optional = true }
+
+[[bin]]
+name = "h2o-monitor"
+path = "src/bin/h2o-monitor.rs"
+required-features = ["sdk", "jev"]

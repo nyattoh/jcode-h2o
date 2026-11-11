@@ -4,3 +4,9 @@ pub mod memory;
 
 #[cfg(feature = "sdk")]
 pub mod monitor;
+
+#[cfg(feature = "jev")]
+pub mod jev;
+
+#[cfg(feature = "sdk")]
+pub mod run;

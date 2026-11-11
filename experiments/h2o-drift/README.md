@@ -33,7 +33,7 @@ ID衝突試験は逐次実行であり、同時書込みや書込み途中の読
 復元失敗試験は原文の不在を扱い、改ざん・破損検出や権限障害を保証しない。
 `resident_bytes` は論理ペイロード量であり、RSSやエネルギーの測定ではない。
 
-unknownは呼出側から直接与える。Jev故障をunknownへ変換するadapterや、
+unknownは呼出側から直接与える（第1段階時点）。Jev故障をunknownへ変換するadapterや、
 Swarm上の枝停止・履歴保持、実daemon、実bot、SemEvolve、外部サービスは未接続・未検証。
 未測定のRSS、I/O、レイテンシ、トークン、費用、実環境での効果はunknown。
 
@@ -56,4 +56,21 @@ $env:RUSTC_WRAPPER=''
 $env:H2O_SOAK_SECONDS='180'
 cargo test --offline --release --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-storage-soak --test storage_soak concurrent_publication_soak -- --ignored --nocapture
 ```
+
+## 第4段階（decision02）
+
+2026-11-11、Kotaが実Jev判定器とjcode Swarm接続（選択肢1と2）を承認した。範囲は実装とoffline／loopback試験だけ。
+上記「Jev故障をunknownへ変換するadapter」は、feature `jev` の `JevJudge` として実装し、127.0.0.1の試験serverでだけ試験した。
+Swarm接続はbinary `h2o-monitor` として実装し、メモリ内の模擬peerと、存在しないsocketへの接続失敗でだけ試験した。
+実Jevへの送信は2026-11-11に合成データで1回だけ（Kota承認、Python参照client経由）。Rust transportでの実送信と実daemonでの実行は未承認・未実行。契約・結果・手動手順・未検証一覧は
+[`STAGE04.md`](../../docs/vis-harness/STAGE04.md)を参照する。
+
+```powershell
+$env:RUSTC_WRAPPER=''
+cargo test --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-drift --features jev
+cargo test --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-drift --features "sdk jev"
+```
+
+2026-11-11、Windowsでいずれも71件成功・ignored 5（exit 0。ignoredのうち1件は実Jev呼出の `tests/jev_live.rs`）。
+
 独立workspaceの継続を提案し、本体への接続段階でworkspace追加の要否を再評価する。
