@@ -120,3 +120,34 @@ cargo test --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-d
 注意: 一部のWindows環境にはloopbackのHTTP通信を書き換えるフィルタがあり、標準メソッドのリクエストの2つ目以降の `Host` ヘッダを黙って落とし、
 未完成のヘッダ（最初の行が終わったあと）をサーバーへ渡さない（素のPythonソケットサーバーでも再現。ランチャーの不具合ではない）。
 このため重複Hostの試験は、非標準メソッド（`XGET`）のTCP試験と、TCPを介さない `ui::tests`（GET/HEAD/POSTを含む）で行う。
+
+## ネイティブ受付UI（Rust / egui、`native-ui` feature）
+
+ブラウザを使わないRustネイティブの受付画面（`h2o-native`）。会話・セッション・デモ応答・スナップショット表示はすべてRust（`src/native.rs` の状態、`src/native_ui.rs` の egui 表示）。
+既定・`sdk`・`jev`・`ui` featureの挙動は変わらない（eframe 0.37 は `native-ui` を指定したときだけ取得・ビルドされる）。Git Bashでリポジトリのルートから:
+
+```bash
+export RUSTC_WRAPPER=
+cargo run --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-native --features native-ui --bin h2o-native
+```
+
+初回だけ crates.io から eframe/egui 一式を取得する（以降は `--offline` 可）。`--target-dir target/h2o-native` は `h2o-ui` 用の `target/h2o-drift` と分けて、実行中の実行ファイルのロックを避けるため。
+
+- 引数は `--snapshot <ファイル>` だけ（省略可。不明な引数は終了コード2）。指定したファイルを起動時に1回、受付と同じ `ui::load_snapshot` で検証して監視パネルへ取り込む。読めない・不正な場合は画面にエラーを出し、取り込まない。
+- 表示は常に「デモ・未接続」。モデル・Jev・daemon・ネットワークへは接続せず、送信すると入力から決まる固定のデモ応答（約0.6秒の生成中表示つき）を返す。`/demo-error` は擬似エラー表示の確認用。作業対象は「未確認」・書き込み権限なしで、チャットからファイル編集や実行はしない。
+- 履歴（新しいチャット・選択）はこのウィンドウのメモリ内のみで、保存されない。eframeの永続化featureも無効。
+- Enterで送信、Shift+Enterで改行。IMEの変換中のEnterと、変換を確定するEnterでは送信しない（Windowsの実IMEで確認済み。evidence/N1.md）。
+- 監視パネルの取り込みは明示的なファイルパス入力か貼り付けJSONのみ（自動でジャーナル等は読まない）。検証は受付と同じゲート（`h2o-snapshot/1`、1 MiB以下ほか上記 `--snapshot` の規則）。
+  不正な取り込みは表示中の内容を変えずにエラーだけを出す。型エラーのメッセージは値を含みうるため、種類だけを表示する。
+  observationの output/error と context のバイト列は保持も表示もしない。`receipt: null` / `needs_reconciliation: null` は「不明（null）」、receipt未記載は「記録なし」。文字列はそのまま文字として表示する（制御文字・双方向制御文字は置き換え）。
+- 各行には由来ラベル（事実／デモ／不明／取込）を付ける。取込データは読み取り専用で、現在の実状態とは限らない。
+- 幅に応じて3段: 1180pt以上は履歴・チャット・監視の3列、760pt以上は監視パネルを見出しのボタンで開閉、それ未満は「チャット／履歴／監視」のタブ。状態行は1行で省略（…）、本文は折り返す。最小ウィンドウは360×480pt。
+- 日本語フォントは同梱しない。既知のシステムフォント（Windows: Yu Gothic → メイリオ → MS ゴシック、macOS: ヒラギノ角ゴシック W3、Linux: Noto Sans CJK の代表的なパス）の最初に読めたものを使い、監視パネルに表示する。
+  見つからない場合は日本語が豆腐（□）になり、その旨を英語併記で表示する。日本語フォントでは `\` が `¥` の字形で表示される（文字自体は `\`）。
+
+試験（offline、ウィンドウを開かずにeguiの実際のTextEdit・IMEイベント・レイアウトを通す。実daemon・実Jev・外部通信なし）:
+
+```bash
+export RUSTC_WRAPPER=
+cargo test --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-native --features native-ui
+```

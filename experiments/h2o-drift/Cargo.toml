@@ -11,12 +11,14 @@ default = []
 sdk = ["dep:jcode-sdk", "dep:serde", "dep:serde_json"]
 jev = ["sdk", "dep:ureq"]
 ui = ["sdk"]
+native-ui = ["ui", "dep:eframe"]
 
 [dependencies]
 jcode-sdk = { path = "../../crates/jcode-sdk", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 ureq = { version = "=3.1.4", default-features = false, features = ["rustls"], optional = true }
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"], optional = true }
 
 [[bin]]
 name = "h2o-monitor"
@@ -27,3 +29,8 @@ required-features = ["sdk", "jev"]
 name = "h2o-ui"
 path = "src/bin/h2o-ui.rs"
 required-features = ["ui"]
+
+[[bin]]
+name = "h2o-native"
+path = "src/bin/h2o-native.rs"
+required-features = ["native-ui"]
