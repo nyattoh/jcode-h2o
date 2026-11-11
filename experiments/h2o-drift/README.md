@@ -136,7 +136,7 @@ cargo run --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h
 - 引数は `--snapshot <ファイル>` だけ（省略可。不明な引数は終了コード2）。指定したファイルを起動時に1回、受付と同じ `ui::load_snapshot` で検証して監視パネルへ取り込む。読めない・不正な場合は画面にエラーを出し、取り込まない。
 - 表示は常に「デモ・未接続」。モデル・Jev・daemon・ネットワークへは接続せず、送信すると入力から決まる固定のデモ応答（約0.6秒の生成中表示つき）を返す。`/demo-error` は擬似エラー表示の確認用。作業対象は「未確認」・書き込み権限なしで、チャットからファイル編集や実行はしない。
 - 履歴（新しいチャット・選択）はこのウィンドウのメモリ内のみで、保存されない。eframeの永続化featureも無効。
-- Enterで送信、Shift+Enterで改行。IMEの変換中のEnterと、変換を確定するEnterでは送信しない（Windowsの実IMEで確認済み。evidence/N1.md）。
+- Enterで送信、Shift+Enterで改行。IMEの変換中・確定時に送信しない処理はeguiのヘッドレス試験で確認した。修正前の実装者によるWindows実IMEの観察は参考記録（evidence/N1.md）に限り、修正後の実窓・実IME操作はUNKNOWN。詳細は[検証範囲](../../docs/vis-harness/NATIVE_UI.md)を参照。
 - 監視パネルの取り込みは明示的なファイルパス入力か貼り付けJSONのみ（自動でジャーナル等は読まない）。検証は受付と同じゲート（`h2o-snapshot/1`、1 MiB以下ほか上記 `--snapshot` の規則）。
   不正な取り込みは表示中の内容を変えずにエラーだけを出す。型エラーのメッセージは値を含みうるため、種類だけを表示する。
   observationの output/error と context のバイト列は保持も表示もしない。`receipt: null` / `needs_reconciliation: null` は「不明（null）」、receipt未記載は「記録なし」。文字列はそのまま文字として表示する（制御文字・双方向制御文字は置き換え）。
