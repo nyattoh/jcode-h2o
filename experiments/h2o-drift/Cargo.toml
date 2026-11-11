@@ -10,6 +10,7 @@ publish = false
 default = []
 sdk = ["dep:jcode-sdk", "dep:serde", "dep:serde_json"]
 jev = ["sdk", "dep:ureq"]
+ui = ["sdk"]
 
 [dependencies]
 jcode-sdk = { path = "../../crates/jcode-sdk", optional = true }
@@ -21,3 +22,8 @@ ureq = { version = "=3.1.4", default-features = false, features = ["rustls"], op
 name = "h2o-monitor"
 path = "src/bin/h2o-monitor.rs"
 required-features = ["sdk", "jev"]
+
+[[bin]]
+name = "h2o-ui"
+path = "src/bin/h2o-ui.rs"
+required-features = ["ui"]

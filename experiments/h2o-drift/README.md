@@ -74,3 +74,49 @@ cargo test --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-d
 2026-11-11、Windowsでいずれも71件成功・ignored 5（exit 0。ignoredのうち1件は実Jev呼出の `tests/jev_live.rs`）。
 
 独立workspaceの継続を提案し、本体への接続段階でworkspace追加の要否を再評価する。
+
+## ローカルUIランチャー（`h2o-ui`）
+
+feature `ui`（`sdk` を含む）で有効になる、127.0.0.1専用の静的サーバー。デーモン・実モデル・ブラウザ自動起動はなく、外部通信もしない
+（待受と試験は同一マシンのloopback TCPを使うので「ネットワークなし」ではなく「外部通信なし」）。
+UIは既定で「デモ／未接続」表示で、実際のH₂O状態は取り込んだスナップショットだけを読み取り専用で表示する。
+
+コマンドは **Git Bash** で実行する（Windowsでは `RUSTC_WRAPPER` を空にする必要がある。PowerShellの `$env:RUSTC_WRAPPER=''` は変数を削除するだけで、
+プロジェクト設定のwrapperが再び使われるため使わない）。リポジトリのルートで、角括弧なしでそのまま実行できる:
+
+```bash
+export RUSTC_WRAPPER=
+cargo run --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-drift --features ui --bin h2o-ui -- --port 8787
+```
+
+PowerShellから実行する場合は同じ内容をGit Bash経由にする:
+
+```powershell
+& 'C:\Program Files\Git\bin\bash.exe' -lc 'export RUSTC_WRAPPER=; cargo run --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-drift --features ui --bin h2o-ui -- --port 8787'
+```
+
+引数は `--port <数値>`、`--assets <ディレクトリ>`、`--snapshot <ファイル>`（すべて省略可。`--` の後ろにそのまま足す。例: `-- --port 0 --snapshot my-snapshot.json`）。
+
+- `--port`: 既定 `8787`。`0` で空きポート。起動すると `http://127.0.0.1:<port>/` を標準出力へ1行出す（ブラウザは自分で開く）。ホスト指定フラグはない。
+- `--assets`: 既定は `experiments/h2o-drift/ui`。配信するのは `/`・`/app.css`・`/core.js`・`/app.js` の固定ルートだけで、リクエストのパスからファイルを探すことはない。
+  ファイルは指定した（信頼できる、利用者自身が選んだ）assetsディレクトリ内の固定名から読み、シンボリックリンク／ジャンクションは辿る。ディレクトリ封じ込めは保証しない。
+- `--snapshot`: 明示的に指定したJSONファイルを起動時に1回だけ読み、実際の `BranchSpec`/`Checkpoint`/`Receipt` 型と封筒規則（`h2o-snapshot/1`、1 MiB以下、50 branch以下、branchあたり1000 checkpoint以下、UTF-8、sequence重複なし、receiptは既存sequenceのみ、未知キー拒否）で検証する。
+  封筒・branch・spec・checkpoint・receiptの各要素はJSONオブジェクト形式でなければならない（配列形式は拒否）。`captured_at` は文字列か省略で、`null` は不可。
+  不正なら理由を標準エラーへ出して終了コード2で終わり、何も配信しない。有効なら `/api/snapshot` がファイルの内容をそのまま返す（未指定なら404）。`receipt: null` と `needs_reconciliation: null` は「不明」としてそのまま保持する。
+  ジャーナルの自動読み取りやdaemonへの接続は行わない。
+- `GET`/`HEAD` のみ。`Host` ヘッダがちょうど1つで、`127.0.0.1:<port>` / `localhost:<port>` でなければ403（重複Hostも403）。
+  ルートは生のrequest-targetとの完全一致で、`/app.css?x` や `/#x` のようなクエリ・フラグメント付きは404（GET/HEADとも）。
+  リクエストヘッダは終端を含めて8 KiB（8192 byte）・3秒まで（超過は431／408）。`HEAD` にはエラー応答でも本文を付けない。CSPなどのセキュリティヘッダは全応答に付く。
+- 引数エラー（不明・重複・値なし・不正なport・存在しない `--assets`）は終了コード2。ポート使用中などの待受失敗は終了コード1。
+- ランチャーを使わず `ui/index.html` を `file://` で直接開いても動く。その場合の実データはUIのファイル選択／貼り付けによる取り込みのみ。
+
+試験（offline、実daemon・実Jev・外部通信なし。`tests/ui_server.rs` は一時ディレクトリの偽assetsを使う）。同じくGit Bashで:
+
+```bash
+export RUSTC_WRAPPER=
+cargo test --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-drift --features ui
+```
+
+注意: 一部のWindows環境にはloopbackのHTTP通信を書き換えるフィルタがあり、標準メソッドのリクエストの2つ目以降の `Host` ヘッダを黙って落とし、
+未完成のヘッダ（最初の行が終わったあと）をサーバーへ渡さない（素のPythonソケットサーバーでも再現。ランチャーの不具合ではない）。
+このため重複Hostの試験は、非標準メソッド（`XGET`）のTCP試験と、TCPを介さない `ui::tests`（GET/HEAD/POSTを含む）で行う。

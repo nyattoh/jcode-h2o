@@ -10,3 +10,6 @@ pub mod jev;
 
 #[cfg(feature = "sdk")]
 pub mod run;
+
+#[cfg(feature = "ui")]
+pub mod ui;
