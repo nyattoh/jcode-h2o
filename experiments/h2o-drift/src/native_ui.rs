@@ -869,7 +869,8 @@ impl NativeApp {
         // possible), so a long error/notice/route never pushes the composer away and the notice
         // stays readable by scrolling
         let left = room - ui.min_rect().height();
-        let max = (left * 0.5).min(left - 60.0).max(36.0);
+        let extra = if left > 500.0 { 24.0 } else { 0.0 };
+        let max = (left * 0.5 + extra).min(left - 60.0).max(36.0);
         ScrollArea::vertical()
             .id_salt("connection-details")
             .max_height(max)
@@ -916,12 +917,8 @@ impl NativeApp {
             } else {
                 "初回の実応答: 未確認（送信して返答が届くまで分かりません）"
             };
-            line(
-                ui,
-                RichText::new(format!("{route} · {verified}"))
-                    .small()
-                    .color(p.muted),
-            );
+            line(ui, RichText::new(verified).small().color(p.muted));
+            line(ui, RichText::new(route).small().color(p.muted));
         }
     }
 
