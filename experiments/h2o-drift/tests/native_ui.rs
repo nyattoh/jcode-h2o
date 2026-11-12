@@ -669,3 +669,13 @@ fn gui_session_selection_in_sidebar_switches_conversation() {
     assert_eq!(h.app.chat().active_id(), Some(first));
     assert!(chat.contains("最初の話題"));
 }
+
+#[test]
+fn display_path_drops_only_the_windows_verbatim_prefix() {
+    use h2o_drift_prototype::native::display_path;
+    use std::path::Path;
+    assert_eq!(display_path(Path::new(r"\\?\D:\work\proj")), r"D:\work\proj");
+    assert_eq!(display_path(Path::new(r"\\?\UNC\server\share\d")), r"\\server\share\d");
+    assert_eq!(display_path(Path::new(r"D:\plain")), r"D:\plain");
+    assert_eq!(display_path(Path::new("/usr/src")), "/usr/src");
+}

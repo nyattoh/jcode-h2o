@@ -19,6 +19,7 @@ use std::{
 
 mod chat_support;
 use chat_support::*;
+mod support;
 
 // ---- headless egui harness -------------------------------------------------------------------
 
@@ -27,6 +28,8 @@ struct Text {
     text: String,
     rect: Rect,
     rows: usize,
+    /// Cut to fit by the widget (an ellipsis is painted; `text` stays the full string).
+    elided: bool,
     color: Color32,
     backdrop: Color32,
     /// The clip rectangle it was painted with (scroll areas, panels).
@@ -126,6 +129,7 @@ impl Gui {
                         text: t.galley.text().to_owned(),
                         rect,
                         rows: t.galley.rows.len(),
+                        elided: t.galley.elided,
                         color,
                         backdrop,
                         clip,
@@ -144,7 +148,10 @@ impl Gui {
     /// A real pointer click on painted text (exact match first, then containment).
     fn click(&mut self, label: &str) -> Frame {
         let f = self.frame(vec![]);
-        let at = f.text(label).rect.center();
+        self.click_at(f.text(label).rect.center())
+    }
+
+    fn click_at(&mut self, at: egui::Pos2) -> Frame {
         let button = |pressed| Event::PointerButton {
             pos: at,
             button: PointerButton::Primary,
@@ -1263,4 +1270,175 @@ fn final_minimum_height_notice_and_composer_are_visible() {
   fits &= n.rect.intersect(n.clip).bottom()<=480.5 && s.is_some_and(|s|s.rect.bottom()<=480.5);
  }
  assert!(fits,"notice/send extend below minimum viewport");
+}
+
+// ---- work target (stage 5): confirmed in the reception, never handed to the chat -------------
+
+const WORK_HINT: &str = "作業先フォルダの絶対パス";
+
+/// What a user types: the canonical test dir without Windows' verbatim `\\?\` prefix.
+fn typed(path: &std::path::Path) -> String {
+    let s = path.to_str().unwrap();
+    s.strip_prefix(r"\\?\").unwrap_or(s).to_owned()
+}
+
+impl Gui {
+    fn open_monitor(&mut self) {
+        match self.app.layout() {
+            h2o_drift_prototype::native::Layout::Narrow => {
+                self.click("監視");
+            }
+            h2o_drift_prototype::native::Layout::Medium => {
+                self.click("監視パネル");
+            }
+            h2o_drift_prototype::native::Layout::Wide => {}
+        }
+    }
+
+    /// Select all in the focused field, then type `s` over it.
+    fn replace_text(&mut self, s: &str) {
+        self.frame(vec![key(Key::A, Modifiers::COMMAND)]);
+        self.type_text(s);
+    }
+}
+
+#[test]
+fn work_target_confirm_flow_fits_one_line_at_every_breakpoint_and_shows_errors() {
+    use h2o_drift_prototype::work_target::WorkTargetState;
+    let dir = support::TestDir::new();
+    let long = dir.path.join(format!("long-work-target-{}", "x".repeat(90)));
+    std::fs::create_dir(&long).unwrap();
+    let input = typed(&long);
+    for (w, h) in [(MIN_W, MIN_H), (900.0, MIN_H), (1280.0, MIN_H)] {
+        let size = vec2(w, h);
+        let peer = Harness::new(Script::default());
+        let mut g = Gui::new(&peer, w, h);
+        g.open_monitor();
+        let f = g.frame(vec![]);
+        assert!(f.has("作業対象: 未確認"), "{w}: {}", f.joined());
+
+        g.click_shown(WORK_HINT);
+        g.type_text(&input);
+        // no permission chosen yet: 確定 is not possible
+        let f = g.click_shown("確定");
+        assert_eq!(g.app.work_target().state(), WorkTargetState::Proposed, "{w}");
+        assert!(!f.has("確定済み"), "{w}: confirmed without a permission: {}", f.joined());
+        assert!(f.has("作業対象: 確認待ち"), "{w}: {}", f.joined());
+
+        g.click_shown("読み書き");
+        let f = g.click_shown("確定");
+        assert_eq!(g.app.work_target().state(), WorkTargetState::Confirmed, "{w}: {}", f.joined());
+        let rows: Vec<_> = f.texts.iter().filter(|t| t.text.contains("作業対象: 確定済み")).collect();
+        assert!(!rows.is_empty(), "{w}: {}", f.joined());
+        for t in rows {
+            assert_eq!(t.rows, 1, "{w}: status row wrapped: {t:?}");
+            assert!(t.rect.right() <= w + 0.5, "{w}: overflow {t:?}");
+            assert!(!t.text.contains(r"\\?\"), "{w}: verbatim prefix shown: {}", t.text);
+        }
+        let row = f.shown(&format!("作業対象: 確定済み: {input} · 読み書き"), size);
+        if w == MIN_W {
+            assert!(row.elided, "long path must be cut with an ellipsis at {w}: {row:?}");
+        }
+        assert!(f.has("計画（未実行）"), "{w}: plan not labelled as a plan: {}", f.joined());
+        assert!(f.has("作業対象を確定しても"), "{w}: chat restriction not stated: {}", f.joined());
+        for t in &f.texts {
+            let r = if t.text == input { t.rect.intersect(t.clip) } else { t.rect };
+            assert!(r.right() <= w + 0.5, "{w} overflow: {:?} {:?}", t.text, t.rect);
+        }
+
+        // a missing path drops the confirmation and shows its own error
+        if w == MIN_W {
+            // the single-line field scrolls its text: click the part that is on screen
+            let f = g.frame(vec![]);
+            let field = f.text(&input);
+            g.click_at(field.rect.intersect(field.clip).center());
+            g.replace_text(&typed(&dir.path.join("missing")));
+            let f = g.frame(vec![]);
+            assert_eq!(g.app.work_target().state(), WorkTargetState::Proposed);
+            assert!(!f.has("確定済み"), "{}", f.joined());
+            let f = g.click_shown("確定");
+            assert!(f.has("作業先が見つかりません"), "{}", f.joined());
+            assert!(!f.has("確定済み") && !f.has("計画（未実行）"), "{}", f.joined());
+            assert!(!dir.path.join("missing").exists(), "confirm created the directory");
+        }
+        assert!(peer.requests().is_empty() && peer.endpoints().is_empty(), "{w}: transport touched");
+    }
+}
+
+#[test]
+fn confirmed_work_target_never_changes_how_the_chat_session_is_created() {
+    use h2o_drift_prototype::chat_transport::CHAT_SYSTEM_PROMPT;
+    use h2o_drift_prototype::work_target::WorkTargetState;
+    use jcode_sdk::PermissionDecision;
+    let dir = support::TestDir::new();
+    let neutral = std::env::temp_dir().join("h2o-native-chat");
+    // a turn that asks for permission: it must be denied whatever the work target says
+    let ask: TurnScript = Arc::new(|s, _| {
+        vec![ev(ApiEvent::PermissionRequest {
+            session_id: s.into(),
+            request_id: "p1".into(),
+            tool_name: "write".into(),
+            description: "write a file".into(),
+        })]
+    });
+    let run = |confirm: bool| -> Vec<String> {
+        let peer = Harness::new(Script { turn: ask.clone(), ..Script::default() });
+        let mut g = Gui::new(&peer, 1280.0, 900.0);
+        if confirm {
+            g.click(WORK_HINT);
+            g.type_text(&typed(&dir.path));
+            g.click("読み書き");
+            g.click("確定");
+            assert_eq!(g.app.work_target().state(), WorkTargetState::Confirmed);
+            g.idle(Duration::from_millis(200));
+            assert!(
+                peer.requests().is_empty() && peer.endpoints().is_empty(),
+                "confirming reached the transport: {:?}",
+                peer.requests()
+            );
+        }
+        g.connect();
+        g.focus_composer();
+        g.type_text("q");
+        g.frame(vec![enter()]);
+        g.until("permission answered", Duration::from_secs(5), |_, _| {
+            peer.count(|r| matches!(r, ApiRequest::PermissionResponse { .. })) > 0
+        });
+        let reqs = peer.requests();
+        let last = reqs
+            .iter()
+            .position(|r| matches!(r, ApiRequest::PermissionResponse { .. }))
+            .unwrap();
+        reqs[..=last]
+            .iter()
+            .filter(|r| !matches!(r, ApiRequest::Ping))
+            .map(|r| match r {
+                ApiRequest::CreateSession { working_dir, system_prompt } => {
+                    assert_eq!(system_prompt.as_deref(), Some(CHAT_SYSTEM_PROMPT));
+                    let wd = std::path::PathBuf::from(working_dir.as_deref().expect("neutral dir"));
+                    assert!(wd.starts_with(&neutral), "not the neutral chat dir: {wd:?}");
+                    assert!(!wd.starts_with(&dir.path), "chat got the work target: {wd:?}");
+                    // the per-session dir name varies; everything else must be identical
+                    serde_json::to_string(&ApiRequest::CreateSession {
+                        working_dir: Some("<neutral>".into()),
+                        system_prompt: system_prompt.clone(),
+                    })
+                    .unwrap()
+                }
+                ApiRequest::ConfigureTools { tools, .. } => {
+                    assert_eq!(tools.enabled, Some(vec![]), "tools must stay disabled");
+                    serde_json::to_string(r).unwrap()
+                }
+                ApiRequest::PermissionResponse { decision, .. } => {
+                    assert_eq!(*decision, PermissionDecision::Deny, "auto-approved");
+                    serde_json::to_string(r).unwrap()
+                }
+                r => serde_json::to_string(r).unwrap(),
+            })
+            .collect()
+    };
+    let baseline = run(false);
+    let confirmed = run(true);
+    assert!(baseline.iter().any(|r| r.contains("ConfigureTools") || r.contains("configure_tools")), "{baseline:#?}");
+    assert_eq!(confirmed, baseline, "a confirmed work target changed the chat session setup");
 }
