@@ -72,4 +72,4 @@ RED/GREENの記録（実行コマンド・exit code）は作業証拠 `target/sw
 - 確定後にフォルダが消えた場合：計画の取得時（`確定` を押したとき）だけ確認し直す。確定済みの表示は、次に `確定` を押すまで再確認しない。
 - macOS・Linux：未実行（Windows 11だけ）。
 - `cargo clippy`：未実行。
-- 別vendorによる独立code review（受入条件A5）は、この文書の作成時点で未完了。
+- 別vendorによる独立code review（受入条件A5）は第1回でpass（codex / gpt-6-luna、指摘なし）。ただしレビュアーはコマンドを実行できず、差分と試験記録を読むだけのレビューだった。
