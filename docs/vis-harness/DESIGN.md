@@ -1,0 +1,51 @@
+# 設計案と実装状況
+
+基点: JCode `f60280ebc49395f077975e7408fc3fe8759f02d1`。
+2026-11-10 decision01時点でKotaのfork（origin: nyattoh/jcode、upstream: 1jehuang/jcode）へ移行済み。
+作業先は `h2o-prototype`。公開・リリース・upstreamへのPRは承認範囲外。
+
+第2段階の保存契約・実装・試験・限界は [STAGE02.md](STAGE02.md) を参照する。
+以下の初期設計にある未実装事項のうち、原文の同時公開とプロセス中断の扱いを同段階で追加した。
+第3段階のSDK境界の模擬監視・履歴保存・未検証範囲は [STAGE03.md](STAGE03.md) を参照する。
+追加承認後の補強は [STAGE03_REINFORCEMENT.md](STAGE03_REINFORCEMENT.md)、
+ルーターと監視の分離は [CONTROL_BOUNDARIES.md](CONTROL_BOUNDARIES.md)、
+要求と検証境界の対応は [ACCEPTANCE_MATRIX.md](ACCEPTANCE_MATRIX.md) に整理した。
+
+```mermaid
+flowchart TD
+  U[利用者] --> F[受付bot]
+  F --> S[JCode SDK / Swarm]
+  S --> A[追加bot adapter]
+  S --> D[目的監視]
+  D --> J[Jev判定]
+  S --> M[H₂O Memory]
+  A --> L[SemEvolve通信]
+```
+
+上図は目標構成。現状は独立試作品とSDK境界の模擬試験であり、図中の実daemon・実adapter・実Jevへの接続はまだ動作しない。
+
+## 目的監視
+
+Jevに渡すのは明示された目的、制約、観測済みアクション、期待・観測結果に限定する。ログを逆順に走査して逸脱の手掛かりを提示することはできるが、モデルの隠れた推論の逆アセンブルではない。二分木は進行か逸脱かという意思決定の分岐を指し、大小順の二分探索木ではない。単調性がないため、過去の境界を二分探索で正確に特定できるとは仮定しない。
+
+判定は `aligned` / `misaligned` / `unknown` とする。逸脱の際に修正回数を消費し、上限後も逸脱なら枝だけを停止。unknownは回数を消費せず保留。途中で寄与を回復すれば続行するが、回数は枝全体で有限に保つ。第3段階でcheckpoint journalと予算の再open復元を追加した。実Jev・実Swarm daemonには未接続で、SDK境界の模擬試験のみ。
+
+## 記憶
+
+研究上の相の名前は保つが、この試作品のIce/Waterはともに完全な作業用コピーをRAMに保持し、Vapourはそのコピーを捨ててdisk原本から戻す。要約・索引・圧縮や自動遷移はまだない。ice/water/vapourはユーザーが先に定めた正確な相の意味を再現したという主張ではない。
+
+`experiments/h2o-drift` は原文保存・ID上書き拒否・相遷移・再読取と決定状態機械の独立Rust crate。第2段階で同時公開とプロセス中断に対応した。実際の消費メモリは未計測で、他プロセスやKVキャッシュを小さくしない。電源断への耐久性、同意、削除、版・監査、改ざん・破損検出、権限は未実装・未検証。非公開・重要データには使わない。
+
+## SemEvolveと受付
+
+SemEvolveの仕様に合わせ、内部言語は自然言語限定にせず、受領と理解を区別する。SQLite hubまたはadapterの設計・実装・接続は未着手。既存のSemEvolveの研究実験、DBや承認状態を変更しない。
+
+JCode SDKの`CreateSessionOptions.working_dir`は任意だが、省略時はruntimeの既定ディレクトリになる。従って「受付に入力不要」であることと「ファイル操作対象が安全に決まる」ことは別。受付セッションでは作業対象確定まで編集権限を付けず、対象確定後に作業セッションへ渡す必要がある。Grok Botの外観は未確認。
+
+## 次の作業
+
+1. fork・上流追跡・作業ブランチは確立済み（decision01）。
+2. 原文の同時公開とプロセス中断は第2段階で追加済み。H₂O元実装の派生表現・索引との統合、電源断・破損への対応は残る。
+3. SDKイベント境界の模擬監視は第3段階で追加済み。実daemon統合は未検証。実Jevの応答検査・タイムアウト・送信制御は別途Kota承認後の作業。
+4. 受付画面、bot設定とadapter、SemEvolve通信を実装し、実接続を試験する。
+5. 比較可能なベンチマークとクラッシュ・再起動試験、Windows動作確認を行う。
