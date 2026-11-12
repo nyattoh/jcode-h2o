@@ -1,127 +1,74 @@
-<div align="center">
+# jcode-h2o
 
-<p>
-<a href="https://trendshift.io/repositories/25042?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-25042" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/25042" alt="1jehuang/jcode | Trendshift" width="250" height="55"></a>
-</p>
+[jcode](https://github.com/1jehuang/jcode) をベースにした研究用の試作です。
+受付 bot・JCode Swarm・H₂O Memory・Jev による目的逸脱監視を組み合わせ、
+人の依頼から成果・履歴までを追跡できるエージェントハーネスを目指しています。
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/jcode-mark-inverse.svg">
-  <img src="assets/brand/jcode-mark.svg" alt="jcode halftone donut logo" width="160">
-</picture>
+> **状態: 研究用試作（未完成）。** 実 daemon・実 bot・実 Jev との統合や、
+> 記憶・監視の実環境での効果はまだ実証していません。未確認の項目は各ドキュメントで
+> `unknown` / `UNKNOWN` と明記しています。
 
-# jcode
+## 構成
 
-<p>
-  <strong>High-performance coding agents.</strong><br>
-  Run dozens of agents in parallel without melting your machine. More agents, less RAM, no lag.
-</p>
+H2O 関連のコードとドキュメントは、次の 2 か所に分けています。jcode 本体のコードは
+upstream のままです。
 
-[![Last Commit](https://img.shields.io/github/last-commit/1jehuang/jcode/master?style=flat-square&logo=github)](https://github.com/1jehuang/jcode/commits/master)
-[![GitHub Stars](https://img.shields.io/github/stars/1jehuang/jcode?style=flat-square&logo=github)](https://github.com/1jehuang/jcode/stargazers)
-[![GitHub Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2F1jehuang%2Fjcode%2Fmaster%2Fdocs%2Fbadges%2Fdownloads.json&style=flat-square&logo=github)](https://github.com/1jehuang/jcode/releases)
+| パス | 内容 |
+| --- | --- |
+| [`experiments/h2o-drift/`](experiments/h2o-drift/) | 試作の本体。独立した workspace の crate で、ルートの workspace には入れていません |
+| [`docs/vis-harness/`](docs/vis-harness/) | 要求仕様・設計・段階ごとの検証記録 |
 
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/nBe9vGyK9a)
-[![Y Combinator](https://img.shields.io/badge/Y%20Combinator-S26-F26625?style=flat-square&logo=ycombinator&logoColor=white)](https://www.ycombinator.com/companies/jcode)
-[![X (Twitter)](https://img.shields.io/badge/follow-%401jehuang-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/1jehuang)
+`h2o-drift` の主な機能（Cargo の feature ごと）:
 
-</div>
+- **既定**: H₂O Memory の保存機構（原文の保存と復元、使用中・待機・ディスク退避の 3 相）と、枝ごとの逸脱判定・修正予算・停止
+- **`sdk`**: jcode SDK の境界を模擬した監視
+- **`jev`**: 実 Jev 判定器 `JevJudge`（故障時は `unknown` に変換）と Swarm 監視用の `h2o-monitor`
+- **`ui`**: 127.0.0.1 専用の静的ランチャー `h2o-ui`（スナップショットを読み取り専用で表示）
+- **`native-ui`**: Rust / egui のネイティブ受付画面 `h2o-native`（デモモードと、ツールをすべて無効にした SDK セッションによる実チャット接続）
 
-<div align="center">
+## クイックスタート
 
-  <a href="https://github.com/1jehuang/jcode/releases/download/readme-assets/jcode-performance-demo-2026-10.mp4">
-    <img src="https://github.com/1jehuang/jcode/releases/download/readme-assets/jcode-performance-demo-2026-10-30fps.webp" alt="jcode performance demonstration" width="900">
-  </a>
-
-  <p><em>jcode performance demonstration (1x speed)</em></p>
-
-<a href="https://github.com/1jehuang/jcode/releases/download/readme-assets/jcode-yc-launch.mp4">
-  <img src="https://github.com/1jehuang/jcode/releases/download/readme-assets/jcode-yc-launch.webp" alt="jcode YC launch video" width="800">
-</a>
-
-</div>
-
-<div align="center">
-
-## Installation
-
-</div>
+リポジトリのルートで、**Git Bash** から実行してください。Windows では
+`RUSTC_WRAPPER` を空にする必要があります。
 
 ```bash
-# macOS & Linux
-curl -fsSL https://jcode.sh/install | bash
+export RUSTC_WRAPPER=
+
+# 試験（offline、外部通信なし）
+cargo test --offline --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-drift --features "sdk jev"
+
+# ネイティブ受付 UI
+cargo run --manifest-path experiments/h2o-drift/Cargo.toml --target-dir target/h2o-native --features native-ui --bin h2o-native
 ```
 
-<div align="center">
+起動直後は未接続で、勝手に接続や送信はしません。実会話には、既存の jcode daemon /
+API bridge と認証済みの provider が必要です。条件と注意点は
+[REAL_CHAT.md](docs/vis-harness/REAL_CHAT.md) を参照してください（実会話の内容は
+daemon 側に保存される場合があります）。
 
-## Benches
+その他の起動方法やオプションは
+[experiments/h2o-drift/README.md](experiments/h2o-drift/README.md) にあります。
 
-</div>
+## ドキュメント
 
-### RAM per additional session (headless)
+- [REQUIREMENTS.md](docs/vis-harness/REQUIREMENTS.md): 要求仕様と受入条件
+- [DESIGN.md](docs/vis-harness/DESIGN.md): 設計案
+- [ACCEPTANCE_MATRIX.md](docs/vis-harness/ACCEPTANCE_MATRIX.md): 要求ごとに、どこまで検証したか
+- [CONTROL_BOUNDARIES.md](docs/vis-harness/CONTROL_BOUNDARIES.md): ルーターと監視の設計境界
+- 段階ごとの記録: [STAGE02](docs/vis-harness/STAGE02.md) / [STAGE03](docs/vis-harness/STAGE03.md) / [STAGE03_REINFORCEMENT](docs/vis-harness/STAGE03_REINFORCEMENT.md) / [STAGE04](docs/vis-harness/STAGE04.md)
+- UI: [NATIVE_UI.md](docs/vis-harness/NATIVE_UI.md) / [LIGHT_MODE.md](docs/vis-harness/LIGHT_MODE.md) / [REAL_CHAT.md](docs/vis-harness/REAL_CHAT.md)
 
-| Tool | First session | Each additional session | Comparison (additional) |
-|---|---|---|---|
-| **jcode** | **71.3 MB** | **~3.3 MB** | baseline |
-| **OpenCode** | 637.1 MB | ~5.9 MB | **1.8× more RAM** |
-| **pi** | 84.0 MB | ~79.6 MB | **24.1× more RAM** |
-| **Claude Code** | 272.9 MB | ~169.3 MB | **51.3× more RAM** |
-| **Codex CLI** | 398.6 MB | ~194.1 MB | **58.8× more RAM** |
+## jcode 本体について
 
-[Reproduce](scripts/bench_headless_memory.py).
+jcode 本体のインストール・使い方・ベンチマークは、upstream の
+[README](https://github.com/1jehuang/jcode#readme) を参照してください。
+このリポジトリは jcode とは別に管理しており、upstream 公式のものではありません。
 
-### Time to first input
+## ライセンス
 
-Time until typed text appears on screen, across 10 interactive launches.
+[MIT](LICENSE)。jcode 本体の著作権は Jeremy Huang に帰属します。
 
-| Tool | Time to first input | Comparison |
-|---|---|---|
-| **jcode** | **19.1 ms** | baseline |
-| **pi** | 596.4 ms | **31.2× slower** |
-| **Codex CLI** | 905.8 ms | **47.4× slower** |
-| **OpenCode** | 1047.9 ms | **54.9× slower** |
-| **Claude Code** | 3512.8 ms | **183.9× slower** |
+## 関連
 
-Full numbers on [jcode.sh](https://jcode.sh).
-
-<div align="center">
-
-## Screenshots
-
-[Browse the interactive gallery on jcode.sh](https://jcode.sh/#screenshots).
-
-<table>
-  <tr>
-    <td align="center"><a href="https://jcode.sh/screenshots/inline-image-rendering.webp"><img src="https://jcode.sh/screenshots/thumbs/inline-image-rendering.webp" alt="Jcode rendering screenshots inline after reading image files" width="440" /></a><br>Inline images</td>
-    <td align="center"><a href="https://jcode.sh/screenshots/resume-menu.webp"><img src="https://jcode.sh/screenshots/thumbs/resume-menu.webp" alt="Jcode resume menu with a session list and preview" width="440" /></a><br>Resume menu</td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://jcode.sh/screenshots/latex-math-rendering.webp"><img src="https://jcode.sh/screenshots/thumbs/latex-math-rendering.webp" alt="Jcode rendering LaTeX mathematics inline" width="440" /></a><br>Inline LaTeX</td>
-    <td align="center"><a href="https://jcode.sh/screenshots/cache-cold-notification.webp"><img src="https://jcode.sh/screenshots/thumbs/cache-cold-notification.webp" alt="Jcode warning that the prompt cache went cold" width="440" /></a><br>Cache cold notification</td>
-  </tr>
-</table>
-
-</div>
-
-## Swarm
-
-Spawn two or more agents in the same repo, and they will automatically be managed by the server to allow native collaboration. When agent A edits a file that agent B has read (code shifting under its feet), the server notifies agent B. Agent B can ignore it if it is not relevant, or it can check the diff to make sure that it doesn't conflict. Each agent has messaging abilities, capable of DMing just one agent, broadcasting to all other agents hosted by the server, or just agents working in that repo. This allows you to spawn multiple sessions in the same repo, and have all conflicts automatically resolved.
-
-Agents are also able to spawn their own swarms autonomously. They have a swarm tool which allows them to spawn in their own teamates to accomplish tasks in parallel. Doing so turns the main agent into a coordinator and the spawned agents into workers. Groups of agents, their messaging channels, their completion statuses, etc are all automatically managed. This can be done headlessly or headed.
-
-
-## OAuth and Providers
-
-Supports a [wide range of providers](https://jcode.sh/docs#providers), including Claude OAuth and OpenAI Codex OAuth.
-
-## Customizability / Self-Dev
-
-Jcode is inventing a new form of customizability. One that doesn't limit you to what a plugin or extension can do. Tell your jcode agent to enter self dev mode, and it will start modifying its own source code. Jcode is optimized to iterate on itself. There is significant infrastructure around self development, which allows it to edit, build, and test its own source code, then reload its own binary and continue work in your (potentially many) sessions, fully automatically.
-
-
-<!-- Add self-dev demo thumbnail/video and fuller writeup here. -->
-
-## Other
-
-- [Token optimization](docs/HARNESS.md#token-optimization)
-- [KV cache](docs/HARNESS.md#kv-cache)
-- [Hill-climbable measurements](docs/HARNESS.md#hill-climbable-measurements)
+- [H₂O Memory](https://github.com/nyattoh/h2o-memory)
+- [SemEvolve](https://github.com/nyattoh/semevolve)
