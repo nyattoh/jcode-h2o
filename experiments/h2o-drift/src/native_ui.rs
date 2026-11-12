@@ -865,11 +865,12 @@ impl NativeApp {
             Bridge::Disconnected { .. } => p.warn,
         };
         line(ui, RichText::new(status).color(color));
-        // the rest scrolls in a bounded area (at most half, leaving the messages ≥ 60 px when
-        // possible), so a long error/notice/route never pushes the composer away and the notice
-        // stays readable by scrolling
+        // the rest scrolls in a bounded area (leaving the messages ≥ 60 px when possible), so a
+        // long error/notice/route never pushes the composer away and the notice stays readable by
+        // scrolling
         let left = room - ui.min_rect().height();
-        let max = (left * 0.5).min(left - 60.0).max(36.0);
+        let ratio = if left > 400.0 { 0.56 } else { 0.5 };
+        let max = (left * ratio).min(left - 60.0).max(36.0);
         ScrollArea::vertical()
             .id_salt("connection-details")
             .max_height(max)
