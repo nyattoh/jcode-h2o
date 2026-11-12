@@ -1,6 +1,7 @@
 //! Experimental storage and branch control, with optional SDK checkpoint monitoring.
 pub mod drift;
 pub mod memory;
+pub mod work_target;
 
 #[cfg(feature = "sdk")]
 pub mod chat_transport;
