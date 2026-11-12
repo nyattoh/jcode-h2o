@@ -8,6 +8,7 @@ use crate::native::{
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame, Key,
     KeyboardShortcut, Label, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, TextStyle,
+    Theme,
 };
 use std::{path::Path, sync::Arc};
 
@@ -56,37 +57,109 @@ pub fn install_japanese_font(ctx: &egui::Context) -> FontStatus {
 
 // ---- palette ---------------------------------------------------------------------------------
 
-const BG: Color32 = Color32::from_rgb(0x0e, 0x10, 0x14);
-const SIDEBAR: Color32 = Color32::from_rgb(0x15, 0x17, 0x1c);
-const SURFACE: Color32 = Color32::from_rgb(0x1c, 0x1f, 0x26);
-const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2e, 0x37);
-const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xec);
-const MUTED: Color32 = Color32::from_rgb(0x9a, 0xa0, 0xab);
-const ACCENT: Color32 = Color32::from_rgb(0x8a, 0xb4, 0xf8);
-const WARN: Color32 = Color32::from_rgb(0xf2, 0xb8, 0x4b);
-const ERROR: Color32 = Color32::from_rgb(0xf2, 0x8b, 0x82);
-const OK: Color32 = Color32::from_rgb(0x81, 0xc9, 0x95);
+/// Every explicit paint in this file comes from the palette of the [`egui::Ui`] it paints into, so
+/// a theme switch recolours all panels, bubbles, chips, banners and errors at once.
+struct Palette {
+    bg: Color32,
+    sidebar: Color32,
+    surface: Color32,
+    hover: Color32,
+    border: Color32,
+    text: Color32,
+    muted: Color32,
+    accent: Color32,
+    selection: Color32,
+    warn: Color32,
+    warn_bg: Color32,
+    error: Color32,
+    error_bg: Color32,
+    ok: Color32,
+}
 
-fn apply_theme(ctx: &egui::Context) {
-    let mut style = (*ctx.global_style()).clone();
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = BG;
-    v.window_fill = SURFACE;
-    v.extreme_bg_color = SURFACE;
-    v.faint_bg_color = SIDEBAR;
-    v.override_text_color = Some(TEXT);
-    v.selection.bg_fill = Color32::from_rgb(0x2b, 0x3d, 0x5c);
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
+const fn rgb(hex: u32) -> Color32 {
+    Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+}
+
+const LIGHT: Palette = Palette {
+    bg: rgb(0xf7f8fa),
+    sidebar: rgb(0xeef0f3),
+    surface: rgb(0xffffff),
+    hover: rgb(0xe3e7ed),
+    border: rgb(0xc9cfd8),
+    text: rgb(0x1f2328),
+    muted: rgb(0x57606a),
+    accent: rgb(0x0b57d0),
+    selection: rgb(0xd3e3fd),
+    warn: rgb(0x7a4f00),
+    warn_bg: rgb(0xfff4d6),
+    error: rgb(0xb3261e),
+    error_bg: rgb(0xfdeceb),
+    ok: rgb(0x1e6b35),
+};
+
+const DARK: Palette = Palette {
+    bg: rgb(0x0e1014),
+    sidebar: rgb(0x15171c),
+    surface: rgb(0x1c1f26),
+    hover: rgb(0x262a33),
+    border: rgb(0x2a2e37),
+    text: rgb(0xe6e8ec),
+    muted: rgb(0x9aa0ab),
+    accent: rgb(0x8ab4f8),
+    selection: rgb(0x2b3d5c),
+    warn: rgb(0xf2b84b),
+    warn_bg: rgb(0x2a2210),
+    error: rgb(0xf28b82),
+    error_bg: rgb(0x2c1616),
+    ok: rgb(0x81c995),
+};
+
+fn palette(theme: Theme) -> &'static Palette {
+    match theme {
+        Theme::Light => &LIGHT,
+        Theme::Dark => &DARK,
+    }
+}
+
+fn pal(ui: &egui::Ui) -> &'static Palette {
+    palette(if ui.visuals().dark_mode {
+        Theme::Dark
+    } else {
+        Theme::Light
+    })
+}
+
+fn style_for(theme: Theme) -> egui::Style {
+    let p = palette(theme);
+    let mut style = egui::Style::default();
+    let mut v = theme.default_visuals();
+    v.panel_fill = p.bg;
+    v.window_fill = p.surface;
+    v.extreme_bg_color = p.surface;
+    v.faint_bg_color = p.sidebar;
+    v.override_text_color = Some(p.text);
+    v.selection.bg_fill = p.selection;
+    v.selection.stroke = Stroke::new(1.0, p.accent);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.noninteractive.bg_fill = p.bg;
+    v.widgets.noninteractive.weak_bg_fill = p.bg;
     for w in [
         &mut v.widgets.inactive,
         &mut v.widgets.hovered,
         &mut v.widgets.active,
+        &mut v.widgets.open,
     ] {
         w.corner_radius = CornerRadius::same(8);
     }
-    v.widgets.inactive.weak_bg_fill = SURFACE;
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x26, 0x2a, 0x33);
+    v.widgets.inactive.bg_fill = p.surface;
+    v.widgets.inactive.weak_bg_fill = p.surface;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.hovered.bg_fill = p.hover;
+    v.widgets.hovered.weak_bg_fill = p.hover;
+    v.widgets.active.bg_fill = p.selection;
+    v.widgets.active.weak_bg_fill = p.selection;
+    v.widgets.open.bg_fill = p.hover;
+    v.widgets.open.weak_bg_fill = p.hover;
     style.visuals = v;
     for (ts, size) in [
         (TextStyle::Heading, 22.0),
@@ -104,7 +177,15 @@ fn apply_theme(ctx: &egui::Context) {
     }
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    ctx.set_global_style(style);
+    style
+}
+
+/// Installs both styles and selects `theme` explicitly, so the OS theme never overrides it.
+fn apply_theme(ctx: &egui::Context, theme: Theme) {
+    for t in [Theme::Light, Theme::Dark] {
+        ctx.set_style_of(t, style_for(t));
+    }
+    ctx.set_theme(theme);
 }
 
 // ---- provenance ------------------------------------------------------------------------------
@@ -118,12 +199,12 @@ enum Prov {
 }
 
 impl Prov {
-    fn chip(self) -> (&'static str, Color32) {
+    fn chip(self, p: &Palette) -> (&'static str, Color32) {
         match self {
-            Prov::Fact => ("事実", OK),
-            Prov::Demo => ("デモ", WARN),
-            Prov::Unknown => ("不明", MUTED),
-            Prov::Imported => ("取込", ACCENT),
+            Prov::Fact => ("事実", p.ok),
+            Prov::Demo => ("デモ", p.warn),
+            Prov::Unknown => ("不明", p.muted),
+            Prov::Imported => ("取込", p.accent),
         }
     }
 }
@@ -131,7 +212,7 @@ impl Prov {
 /// One compact status row: provenance chip + a single truncated line.
 fn row(ui: &mut egui::Ui, prov: Prov, text: &str) {
     ui.horizontal(|ui| {
-        let (label, color) = prov.chip();
+        let (label, color) = prov.chip(pal(ui));
         Frame::new()
             .stroke(Stroke::new(1.0, color))
             .corner_radius(CornerRadius::same(4))
@@ -183,7 +264,8 @@ pub struct NativeApp {
     pane: Pane,
     monitor_open: bool,
     focus_composer: bool,
-    styled: bool,
+    theme: Theme,
+    applied: Option<Theme>,
     path_input: String,
     paste_input: String,
     notice: Option<String>,
@@ -207,7 +289,8 @@ impl NativeApp {
             pane: Pane::Chat,
             monitor_open: false,
             focus_composer: true,
-            styled: false,
+            theme: Theme::Light,
+            applied: None,
             path_input: String::new(),
             paste_input: String::new(),
             notice: None,
@@ -254,10 +337,12 @@ impl NativeApp {
 
     /// One frame. Public so tests can drive real egui passes headlessly.
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        if !self.styled {
-            apply_theme(ui.ctx());
-            self.styled = true;
+        if self.applied != Some(self.theme) {
+            apply_theme(ui.ctx(), self.theme);
+            ui.set_style(ui.ctx().global_style()); // this pass's root Ui predates the switch
+            self.applied = Some(self.theme);
         }
+        let p = pal(ui);
         let now = ui.input(|i| i.time);
         self.chat.tick(now);
         if let Some(due) = self.chat.next_due() {
@@ -267,13 +352,21 @@ impl NativeApp {
         self.layout = layout_for(ui.available_width());
 
         egui::Panel::top("header")
-            .frame(Frame::new().fill(BG).inner_margin(Margin::symmetric(12, 8)))
+            .frame(
+                Frame::new()
+                    .fill(p.bg)
+                    .inner_margin(Margin::symmetric(12, 8)),
+            )
             .show(ui, |ui| self.header(ui));
 
         match self.layout {
             Layout::Narrow => {
                 egui::Panel::top("tabs")
-                    .frame(Frame::new().fill(BG).inner_margin(Margin::symmetric(12, 4)))
+                    .frame(
+                        Frame::new()
+                            .fill(p.bg)
+                            .inner_margin(Margin::symmetric(12, 4)),
+                    )
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             for (pane, label) in [
@@ -288,7 +381,7 @@ impl NativeApp {
                         });
                     });
                 egui::CentralPanel::default()
-                    .frame(Frame::new().fill(BG).inner_margin(Margin::same(10)))
+                    .frame(Frame::new().fill(p.bg).inner_margin(Margin::same(10)))
                     .show(ui, |ui| match self.pane {
                         Pane::Chat => self.chat_ui(ui),
                         Pane::History => self.history_ui(ui),
@@ -300,20 +393,20 @@ impl NativeApp {
                     .resizable(true)
                     .default_size(250.0)
                     .size_range(180.0..=360.0)
-                    .frame(Frame::new().fill(SIDEBAR).inner_margin(Margin::same(12)))
+                    .frame(Frame::new().fill(p.sidebar).inner_margin(Margin::same(12)))
                     .show(ui, |ui| self.history_ui(ui));
                 if layout == Layout::Wide || self.monitor_open {
                     egui::Panel::right("monitor")
                         .resizable(true)
                         .default_size(340.0)
                         .size_range(260.0..=520.0)
-                        .frame(Frame::new().fill(SIDEBAR).inner_margin(Margin::same(12)))
+                        .frame(Frame::new().fill(p.sidebar).inner_margin(Margin::same(12)))
                         .show(ui, |ui| self.monitor_ui(ui));
                 }
                 egui::CentralPanel::default()
                     .frame(
                         Frame::new()
-                            .fill(BG)
+                            .fill(p.bg)
                             .inner_margin(Margin::symmetric(16, 10)),
                     )
                     .show(ui, |ui| self.chat_ui(ui));
@@ -322,10 +415,28 @@ impl NativeApp {
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
         ui.horizontal(|ui| {
-            ui.add(Label::new(RichText::new("H₂O 受付").strong().size(17.0)).truncate());
-            if self.layout == Layout::Medium {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // right-to-left first so the switch keeps its room and the title truncates instead
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                for (theme, label, hint) in [
+                    (Theme::Dark, "ダーク", "ダークモード（暗い表示）に切り替え"),
+                    (
+                        Theme::Light,
+                        "ライト",
+                        "ライトモード（明るい表示）に切り替え",
+                    ),
+                ] {
+                    if ui
+                        .selectable_value(&mut self.theme, theme, label)
+                        .on_hover_text(hint)
+                        .changed()
+                    {
+                        ui.ctx().request_repaint();
+                    }
+                }
+                ui.add(Label::new(RichText::new("表示").small().color(p.muted)));
+                if self.layout == Layout::Medium {
                     let label = if self.monitor_open {
                         "監視パネルを閉じる"
                     } else {
@@ -334,12 +445,15 @@ impl NativeApp {
                     if ui.button(label).clicked() {
                         self.monitor_open = !self.monitor_open;
                     }
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(Label::new(RichText::new("H₂O 受付").strong().size(17.0)).truncate());
                 });
-            }
+            });
         });
         Frame::new()
-            .fill(Color32::from_rgb(0x2a, 0x22, 0x10))
-            .stroke(Stroke::new(1.0, WARN))
+            .fill(p.warn_bg)
+            .stroke(Stroke::new(1.0, p.warn))
             .corner_radius(CornerRadius::same(6))
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
@@ -349,32 +463,33 @@ impl NativeApp {
                     RichText::new(
                         "デモ・未接続 — モデル/Jev/daemonには接続しません。応答は固定のデモです。",
                     )
-                    .color(WARN),
+                    .color(p.warn),
                 );
                 line(
                     ui,
                     RichText::new(
                         "作業対象: 未確認 · 書き込み権限なし（チャットから編集・実行しません）",
                     )
-                    .color(WARN)
+                    .color(p.warn)
                     .small(),
                 );
             });
     }
 
     fn history_ui(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
         let full = ui.available_width();
         if ui
             .add_sized(
                 [full, 34.0],
-                egui::Button::new("＋ 新しいチャット").fill(SURFACE),
+                egui::Button::new("＋ 新しいチャット").fill(p.surface),
             )
             .clicked()
         {
             self.new_chat();
         }
         ui.add_space(6.0);
-        line(ui, RichText::new("履歴").color(MUTED).small());
+        line(ui, RichText::new("履歴").color(p.muted).small());
         let mut clicked = None;
         egui::Panel::bottom("history-scope")
             .frame(Frame::new().inner_margin(Margin::symmetric(0, 6)))
@@ -382,7 +497,7 @@ impl NativeApp {
                 line(
                     ui,
                     RichText::new("履歴は保存されません（メモリ内のみ）")
-                        .color(MUTED)
+                        .color(p.muted)
                         .small(),
                 );
             });
@@ -390,7 +505,7 @@ impl NativeApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if self.chat.sessions().is_empty() {
-                    line(ui, RichText::new("履歴はまだありません").color(MUTED));
+                    line(ui, RichText::new("履歴はまだありません").color(p.muted));
                 }
                 for s in self.chat.sessions().iter().rev() {
                     let selected = self.chat.active_id() == Some(s.id);
@@ -413,6 +528,7 @@ impl NativeApp {
     }
 
     fn chat_ui(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
         egui::Panel::bottom("composer")
             .frame(Frame::new().inner_margin(Margin::symmetric(0, 8)))
             .show(ui, |ui| self.composer_ui(ui));
@@ -431,13 +547,9 @@ impl NativeApp {
                         let s = self.chat.active().expect("not empty");
                         for m in &s.messages {
                             let (who, fill, color) = match m.role {
-                                Role::User => ("あなた", SURFACE, MUTED),
-                                Role::Demo => ("デモ応答（未接続）", BG, WARN),
-                                Role::DemoError => (
-                                    "デモのエラー（擬似）",
-                                    Color32::from_rgb(0x2c, 0x16, 0x16),
-                                    ERROR,
-                                ),
+                                Role::User => ("あなた", p.surface, p.muted),
+                                Role::Demo => ("デモ応答（未接続）", p.warn_bg, p.warn),
+                                Role::DemoError => ("デモのエラー（擬似）", p.error_bg, p.error),
                             };
                             ui.add_space(4.0);
                             line(ui, RichText::new(who).small().color(color));
@@ -445,7 +557,11 @@ impl NativeApp {
                                 .fill(fill)
                                 .stroke(Stroke::new(
                                     1.0,
-                                    if m.role == Role::User { BORDER } else { color },
+                                    if m.role == Role::User {
+                                        p.border
+                                    } else {
+                                        color
+                                    },
                                 ))
                                 .corner_radius(CornerRadius::same(12))
                                 .inner_margin(Margin::symmetric(12, 8))
@@ -458,7 +574,7 @@ impl NativeApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.add(egui::Spinner::new());
-                                line(ui, RichText::new("デモ応答を生成中…").color(MUTED));
+                                line(ui, RichText::new("デモ応答を生成中…").color(p.muted));
                             });
                         }
                     });
@@ -466,6 +582,7 @@ impl NativeApp {
     }
 
     fn welcome_ui(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
         ui.vertical_centered(|ui| {
             ui.add_space((ui.available_height() * 0.25).min(140.0));
             ui.add(Label::new(RichText::new("何をお手伝いしましょう？").heading()).wrap());
@@ -473,7 +590,7 @@ impl NativeApp {
             ui.add(
                 Label::new(
                     RichText::new("これはデモです。送信内容はどこにも送られず、決まった形のデモ応答が返ります。")
-                        .color(MUTED),
+                        .color(p.muted),
                 )
                 .wrap(),
             );
@@ -488,13 +605,14 @@ impl NativeApp {
     }
 
     fn composer_ui(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
         let loading = self.chat.active().is_some_and(|s| s.is_loading());
         let id = ui.make_persistent_id("composer");
         let was_focused = ui.memory(|m| m.has_focus(id));
         let mut send = false;
         Frame::new()
-            .fill(SURFACE)
-            .stroke(Stroke::new(1.0, BORDER))
+            .fill(p.surface)
+            .stroke(Stroke::new(1.0, p.border))
             .corner_radius(CornerRadius::same(16))
             .inner_margin(Margin::symmetric(12, 8))
             .show(ui, |ui| {
@@ -570,10 +688,11 @@ impl NativeApp {
         } else {
             "Enterで送信 · Shift+Enterで改行 · 変換中のEnterは送信しません"
         };
-        line(ui, RichText::new(hint).small().color(MUTED));
+        line(ui, RichText::new(hint).small().color(p.muted));
     }
 
     fn monitor_ui(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(ui.available_width());
             line(ui, RichText::new("状態").strong());
@@ -590,11 +709,12 @@ impl NativeApp {
             line(ui, RichText::new("H₂O メモリ / ワーカー / ゴール").strong());
             if let Some(err) = &self.monitor.last_error {
                 Frame::new()
-                    .stroke(Stroke::new(1.0, ERROR))
+                    .fill(p.error_bg)
+                    .stroke(Stroke::new(1.0, p.error))
                     .corner_radius(CornerRadius::same(6))
                     .inner_margin(Margin::same(6))
                     .show(ui, |ui| {
-                        ui.add(Label::new(RichText::new(format!("読み込めませんでした（表示中の内容は変わりません）: {err}")).color(ERROR)).wrap());
+                        ui.add(Label::new(RichText::new(format!("読み込めませんでした（表示中の内容は変わりません）: {err}")).color(p.error)).wrap());
                     });
             }
             match &self.monitor.snapshot {
@@ -602,7 +722,7 @@ impl NativeApp {
                     row(ui, Prov::Unknown, "メモリ: 不明（未接続）");
                     row(ui, Prov::Unknown, "ワーカー: 不明（未接続）");
                     row(ui, Prov::Unknown, "ゴール: 不明（未接続）");
-                    ui.add(Label::new(RichText::new("下でスナップショットを明示的に取り込むと表示します（読み取り専用）。").small().color(MUTED)).wrap());
+                    ui.add(Label::new(RichText::new("下でスナップショットを明示的に取り込むと表示します（読み取り専用）。").small().color(p.muted)).wrap());
                 }
                 Some(view) => {
                     row(ui, Prov::Imported, &format!("取込・読み取り専用: {}", view.source));
@@ -611,7 +731,7 @@ impl NativeApp {
                         Prov::Imported,
                         &format!("取得時刻: {}", view.captured_at.as_deref().unwrap_or("不明（記載なし）")),
                     );
-                    line(ui, RichText::new("取込データは現在の実状態とは限りません").small().color(MUTED));
+                    line(ui, RichText::new("取込データは現在の実状態とは限りません").small().color(p.muted));
                     if view.branches.is_empty() {
                         row(ui, Prov::Imported, "ブランチ: 0件");
                     }
@@ -626,6 +746,7 @@ impl NativeApp {
     }
 
     fn import_ui(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
         line(
             ui,
             RichText::new("スナップショットの取り込み（読み取り専用）").strong(),
@@ -634,7 +755,7 @@ impl NativeApp {
             Label::new(
                 RichText::new("自動では何も読みません。h2o-snapshot/1 形式・1 MiB以下のJSONを、ファイルパスか貼り付けで明示的に指定します。")
                     .small()
-                    .color(MUTED),
+                    .color(p.muted),
             )
             .wrap(),
         );
@@ -668,7 +789,7 @@ impl NativeApp {
             }
         });
         if let Some(n) = &self.notice {
-            line(ui, RichText::new(n.as_str()).small().color(OK));
+            line(ui, RichText::new(n.as_str()).small().color(p.ok));
         }
     }
 }
@@ -676,9 +797,10 @@ impl NativeApp {
 const DEMO_ERROR_HINT: &str = "エラー表示を確認（/demo-error）";
 
 fn branch_ui(ui: &mut egui::Ui, b: &BranchRow) {
+    let p = pal(ui);
     ui.add_space(6.0);
     Frame::new()
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0, p.border))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
@@ -723,7 +845,7 @@ fn branch_ui(ui: &mut egui::Ui, b: &BranchRow) {
                 ui,
                 RichText::new(format!("チェックポイント {total}件"))
                     .small()
-                    .color(MUTED),
+                    .color(p.muted),
             );
             for c in b
                 .checkpoints
@@ -749,7 +871,7 @@ fn branch_ui(ui: &mut egui::Ui, b: &BranchRow) {
                     ui,
                     RichText::new(format!("古い{}件は表示を省略", total - SHOWN_CHECKPOINTS))
                         .small()
-                        .color(MUTED),
+                        .color(p.muted),
                 );
             }
         });
