@@ -73,8 +73,10 @@ jobs:
       - name: Run h2o-drift test suite
         if: ${{ !cancelled() }}
         run: |
-          cargo test --locked --manifest-path experiments/h2o-drift/Cargo.toml --features "native-ui jev"
-          cargo test --locked --manifest-path experiments/h2o-drift/Cargo.toml
+          cargo test --locked --manifest-path experiments/h2o-drift/Cargo.toml --features "native-ui jev" -- --skip binds_loopback_only_and_stops
+          cargo test --locked --manifest-path experiments/h2o-drift/Cargo.toml --features "native-ui jev" --test ui_server binds_loopback_only_and_stops -- --exact
+          cargo test --locked --manifest-path experiments/h2o-drift/Cargo.toml -- --skip binds_loopback_only_and_stops
+          cargo test --locked --manifest-path experiments/h2o-drift/Cargo.toml --test ui_server binds_loopback_only_and_stops -- --exact
 
   release-automation:
     name: Release Automation
