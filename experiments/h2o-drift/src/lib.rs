@@ -3,6 +3,9 @@ pub mod drift;
 pub mod memory;
 
 #[cfg(feature = "sdk")]
+pub mod chat_transport;
+
+#[cfg(feature = "sdk")]
 pub mod monitor;
 
 #[cfg(feature = "jev")]

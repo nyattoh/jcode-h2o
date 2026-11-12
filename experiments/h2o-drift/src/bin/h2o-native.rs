@@ -1,5 +1,7 @@
-//! Native (egui) reception UI. Demo/unconnected: no daemon, model, Jev or network.
-//! Usage: h2o-native [--snapshot <file>]
+//! Native (egui) reception UI. Starts unconnected in real-chat mode: it talks to an EXISTING
+//! jcode harness API socket only after the user enters its path and clicks 接続 (never starts a
+//! daemon, logs in, reads keys, picks a model or sends a prompt by itself). The fixed demo is a
+//! separate, explicitly chosen mode. Usage: h2o-native [--snapshot <file>]
 use eframe::egui;
 use h2o_drift_prototype::native_ui::{NativeApp, install_japanese_font};
 use std::{path::PathBuf, process::ExitCode};
@@ -24,7 +26,7 @@ fn main() -> ExitCode {
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("H₂O 受付（デモ・未接続）")
+            .with_title("H₂O 受付")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([360.0, 480.0]),
         ..Default::default()

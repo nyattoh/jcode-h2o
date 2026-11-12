@@ -7,7 +7,7 @@
 use eframe::egui::{
     self, Color32, Event, Key, Modifiers, PointerButton, Rect, Shape, Theme, pos2, vec2,
 };
-use h2o_drift_prototype::native::{DEMO_DELAY_SECS, DEMO_ERROR_COMMAND, Layout};
+use h2o_drift_prototype::native::{DEMO_DELAY_SECS, DEMO_ERROR_COMMAND, Kind, Layout};
 use h2o_drift_prototype::native_ui::{NativeApp, install_japanese_font};
 use serde_json::{Value, json};
 
@@ -88,9 +88,11 @@ impl Harness {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         let font = install_japanese_font(&ctx);
+        let mut app = NativeApp::new(font);
+        app.set_mode(Kind::Demo); // the demo states are under test; real chat is in chat_ui.rs
         let mut h = Self {
             ctx,
-            app: NativeApp::new(font),
+            app,
             time: 0.0,
             size: vec2(width, height),
         };

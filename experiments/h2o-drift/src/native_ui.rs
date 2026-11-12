@@ -1,9 +1,12 @@
 //! egui view of the native reception UI. State and decisions live in [`crate::native`]; this file
-//! only lays out widgets, maps egui input to [`KeyInput`] and loads a system Japanese font.
-//! It never connects to anything and never writes files.
+//! lays out widgets, maps egui input to [`KeyInput`], loads a system Japanese font and forwards
+//! explicit user actions (接続 / 送信 / キャンセル / 切断 / 新しいチャット) to the
+//! [`ChatController`], whose events it drains each frame without blocking. It connects only when
+//! the user clicks 接続 and never writes files.
+use crate::chat_transport::{ChatController, ConnectConfig};
 use crate::native::{
-    BranchRow, Chat, ImeGuard, KeyInput, Layout, Monitor, ReceiptState, Role, Tri, layout_for,
-    one_line, prose,
+    BranchRow, Bridge, Chat, ImeGuard, KeyInput, Kind, Layout, Link, Monitor, ReceiptState, Role,
+    Session, Tri, layout_for, one_line, prose,
 };
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame, Key,
@@ -222,6 +225,16 @@ fn row(ui: &mut egui::Ui, prov: Prov, text: &str) {
     });
 }
 
+/// This app writes no history file; the jcode daemon/runtime side was not observed and may keep
+/// what a real chat sent (current runtime source persists session metadata after a prompt).
+const HISTORY_SCOPE: &str = "この画面の履歴はメモリ内のみ（このアプリはファイルに保存しません）。ただし実会話で送った内容は、jcode側（daemon/runtime）に保存される場合があります。アプリを閉じても削除されたとは限りません。デモの内容はどこにも送りません。";
+
+/// Shown in real mode before any prompt: storage scope plus the C1 per-turn session and the
+/// replay rule of chat_transport::replay: the most recent contiguous accepted whole turns whose
+/// q+a body chars total ≤ MAX_REPLAY_CHARS (32 000), rendered chronologically; labels/separators/
+/// omission note come on top, and an oversize newest turn drops all earlier context.
+const REAL_CHAT_NOTICE: &str = "保存と文脈: この画面の履歴はメモリ内のみですが、送信内容はjcode側（daemon/runtime）に保存される場合があります。アプリを閉じても削除されたとは限りません。送信ごとに新しい隔離セッションを使います。2回目以降は、このチャットで応答済みのやり取りを往復単位で、直近から連続する分だけ質問と応答の本文合計32,000文字以内で選び、時系列順に添えて送ります（見出し・区切り・省略の説明は別に加わります。収まらない古い分は省略し、直近の1往復だけで超える場合はそれ以前の文脈を全て省略。失敗・キャンセルの分は送りません。この32,000文字は今回の入力・送信全体・画面の履歴・トークン数の上限ではありません。文脈の引き継ぎは対応するjcodeが前提）。スナップショットは送りません。";
+
 fn line(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) {
     ui.add(Label::new(text).truncate());
 }
@@ -255,6 +268,8 @@ enum Pane {
 }
 
 pub struct NativeApp {
+    controller: ChatController,
+    endpoint_input: String,
     chat: Chat,
     monitor: Monitor,
     composer: String,
@@ -278,8 +293,15 @@ impl eframe::App for NativeApp {
 }
 
 impl NativeApp {
+    /// Real controller over the platform socket. Nothing connects until the user clicks 接続.
     pub fn new(font: FontStatus) -> Self {
+        Self::with_controller(font, ChatController::new())
+    }
+
+    pub fn with_controller(font: FontStatus, controller: ChatController) -> Self {
         Self {
+            controller,
+            endpoint_input: String::new(),
             chat: Chat::default(),
             monitor: Monitor::default(),
             composer: String::new(),
@@ -295,6 +317,12 @@ impl NativeApp {
             paste_input: String::new(),
             notice: None,
         }
+    }
+
+    /// Explicit choice between real chat and the local demo. Never connects by itself.
+    pub fn set_mode(&mut self, kind: Kind) {
+        self.chat.set_mode(kind);
+        self.focus_composer = true;
     }
 
     pub fn chat(&self) -> &Chat {
@@ -315,10 +343,95 @@ impl NativeApp {
         self.monitor_open = true;
     }
 
+    /// A new conversation. While connected, a real one gets its own new isolated SDK session
+    /// (the controller closes the previous one); old conversations are never re-bound.
     pub fn new_chat(&mut self) {
-        self.chat.new_session();
+        if !self.can_start_chat() {
+            return;
+        }
+        let id = self.chat.new_session();
+        let unbound = self
+            .chat
+            .active()
+            .is_some_and(|s| s.kind == Kind::Real && s.link == Link::Unbound);
+        if unbound && *self.chat.bridge() == Bridge::Connected {
+            match self.controller.new_session(id) {
+                Ok(()) => self.chat.mark_binding(id),
+                Err(e) => self.chat.rejected(id, &e),
+            }
+        }
         self.pane = Pane::Chat;
         self.focus_composer = true;
+    }
+
+    /// The kind of the active conversation, or the chosen mode when none is active.
+    fn kind(&self) -> Kind {
+        self.chat.active().map_or(self.chat.mode(), |s| s.kind)
+    }
+
+    /// A real turn or session setup in flight blocks opening another session.
+    fn can_start_chat(&self) -> bool {
+        self.chat.mode() == Kind::Demo || !self.chat.awaiting()
+    }
+
+    /// Explicit connect to an existing jcode endpoint. Starts nothing else.
+    fn connect(&mut self) {
+        let endpoint = self.endpoint_input.trim().trim_matches('"').to_owned();
+        if endpoint.is_empty() {
+            self.chat.error = Some("エンドポイントを入力してください".into());
+            return;
+        }
+        let id = self.chat.connect_target();
+        let config = ConnectConfig {
+            endpoint: endpoint.into(),
+            ..ConnectConfig::default()
+        };
+        if let Err(e) = self.controller.connect(config, id) {
+            self.chat.rejected(id, &e);
+        }
+        self.pane = Pane::Chat;
+    }
+
+    fn send(&mut self, now: f64) {
+        let text = self.composer.trim().to_owned();
+        let accepted = if self.kind() == Kind::Demo {
+            self.chat.send(&text, now)
+        } else if let Some((id, request)) = self.chat.prepare(&text) {
+            match self.controller.send(id, request, text.clone()) {
+                Ok(()) => {
+                    self.chat.sent(id, request, &text);
+                    true
+                }
+                Err(e) => {
+                    self.chat.error = Some(one_line(&e, 300));
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if accepted {
+            self.composer.clear();
+            self.pane = Pane::Chat;
+        }
+        self.focus_composer = true;
+    }
+
+    /// Drains controller events (never blocks) and keeps polling while one is expected.
+    fn poll(&mut self, ctx: &egui::Context) {
+        while let Some(event) = self.controller.try_recv() {
+            self.chat.apply(event);
+        }
+        if let Some(id) = self.chat.active_id()
+            && self.composer.trim().is_empty()
+            && let Some(draft) = self.chat.take_draft(id)
+        {
+            self.composer = draft;
+            self.focus_composer = true;
+        }
+        if self.chat.awaiting() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
     }
 
     pub fn select_session(&mut self, id: u64) -> bool {
@@ -344,6 +457,7 @@ impl NativeApp {
         }
         let p = pal(ui);
         let now = ui.input(|i| i.time);
+        self.poll(ui.ctx());
         self.chat.tick(now);
         if let Some(due) = self.chat.next_due() {
             ui.ctx()
@@ -458,31 +572,36 @@ impl NativeApp {
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                line(
-                    ui,
-                    RichText::new(
+                let (first, second) = if self.kind() == Kind::Demo {
+                    (
                         "デモ・未接続 — モデル/Jev/daemonには接続しません。応答は固定のデモです。",
-                    )
-                    .color(p.warn),
-                );
-                line(
-                    ui,
-                    RichText::new(
                         "作業対象: 未確認 · 書き込み権限なし（チャットから編集・実行しません）",
                     )
-                    .color(p.warn)
-                    .small(),
-                );
+                } else {
+                    (
+                        "実会話 — 既存のjcodeに明示的に接続します（自動起動しません・ログインや鍵の読み取りもしません）",
+                        "ツール無効化を確認してから送信 · 作業対象なし（編集・実行しません）· H₂O/Jev/Swarm/メモリは不明のまま",
+                    )
+                };
+                line(ui, RichText::new(first).color(p.warn));
+                line(ui, RichText::new(second).color(p.warn).small());
             });
     }
 
     fn history_ui(&mut self, ui: &mut egui::Ui) {
         let p = pal(ui);
         let full = ui.available_width();
+        let enabled = self.can_start_chat();
         if ui
-            .add_sized(
-                [full, 34.0],
-                egui::Button::new("＋ 新しいチャット").fill(p.surface),
+            .add_enabled_ui(enabled, |ui| {
+                ui.add_sized(
+                    [full, 34.0],
+                    egui::Button::new("＋ 新しいチャット").fill(p.surface),
+                )
+            })
+            .inner
+            .on_disabled_hover_text(
+                "応答またはセッション準備の完了後に作れます（キャンセルできます）",
             )
             .clicked()
         {
@@ -494,12 +613,7 @@ impl NativeApp {
         egui::Panel::bottom("history-scope")
             .frame(Frame::new().inner_margin(Margin::symmetric(0, 6)))
             .show(ui, |ui| {
-                line(
-                    ui,
-                    RichText::new("履歴は保存されません（メモリ内のみ）")
-                        .color(p.muted)
-                        .small(),
-                );
+                ui.add(Label::new(RichText::new(HISTORY_SCOPE).color(p.muted).small()).wrap());
             });
         ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -529,9 +643,15 @@ impl NativeApp {
 
     fn chat_ui(&mut self, ui: &mut egui::Ui) {
         let p = pal(ui);
+        // composer first: panels claim space in call order, so 送信/キャンセル keep their room
+        // at the supported minimum window (360×480) however long the notice, route or error is
         egui::Panel::bottom("composer")
             .frame(Frame::new().inner_margin(Margin::symmetric(0, 8)))
             .show(ui, |ui| self.composer_ui(ui));
+        let room = ui.available_height();
+        egui::Panel::top("connection")
+            .frame(Frame::new().inner_margin(Margin::symmetric(0, 6)))
+            .show(ui, |ui| self.connection_ui(ui, room));
         egui::CentralPanel::default()
             .frame(Frame::new())
             .show(ui, |ui| {
@@ -550,6 +670,10 @@ impl NativeApp {
                                 Role::User => ("あなた", p.surface, p.muted),
                                 Role::Demo => ("デモ応答（未接続）", p.warn_bg, p.warn),
                                 Role::DemoError => ("デモのエラー（擬似）", p.error_bg, p.error),
+                                Role::Assistant => ("AI（jcode・実応答）", p.sidebar, p.accent),
+                                Role::Notice => {
+                                    ("エラー（実接続・応答ではありません）", p.error_bg, p.error)
+                                }
                             };
                             ui.add_space(4.0);
                             line(ui, RichText::new(who).small().color(color));
@@ -571,10 +695,15 @@ impl NativeApp {
                                 });
                         }
                         if s.is_loading() {
+                            let waiting = match &s.request {
+                                None => "デモ応答を生成中…",
+                                Some(r) if r.cancelling => "キャンセルを確認しています…",
+                                Some(_) => "実応答を待っています…",
+                            };
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.add(egui::Spinner::new());
-                                line(ui, RichText::new("デモ応答を生成中…").color(p.muted));
+                                line(ui, RichText::new(waiting).color(p.muted));
                             });
                         }
                     });
@@ -587,6 +716,16 @@ impl NativeApp {
             ui.add_space((ui.available_height() * 0.25).min(140.0));
             ui.add(Label::new(RichText::new("何をお手伝いしましょう？").heading()).wrap());
             ui.add_space(6.0);
+            if self.kind() == Kind::Real {
+                ui.add(
+                    Label::new(
+                        RichText::new("既存のjcodeに接続すると、送信した文章と、このチャットで応答済みのやり取りだけがjcode経由でAIに送られます。取り込んだスナップショットは送りません。")
+                            .color(p.muted),
+                    )
+                    .wrap(),
+                );
+                return;
+            }
             ui.add(
                 Label::new(
                     RichText::new("これはデモです。送信内容はどこにも送られず、決まった形のデモ応答が返ります。")
@@ -604,12 +743,166 @@ impl NativeApp {
         });
     }
 
+    /// Mode switch, endpoint field, 接続/切断, bridge/session status, reported route and errors.
+    /// `room` is the height above the composer; the details scroll within part of it.
+    fn connection_ui(&mut self, ui: &mut egui::Ui, room: f32) {
+        let p = pal(ui);
+        let kind = self.kind();
+        ui.horizontal(|ui| {
+            for (k, label, hint) in [
+                (
+                    Kind::Real,
+                    "実会話",
+                    "既存のjcode経由で実際のAIと会話します",
+                ),
+                (
+                    Kind::Demo,
+                    "デモモード",
+                    "どこにも送らない固定のデモ応答で表示を確認します",
+                ),
+            ] {
+                if ui
+                    .add(egui::Button::selectable(kind == k, label))
+                    .on_hover_text(hint)
+                    .clicked()
+                    && kind != k
+                {
+                    self.set_mode(k);
+                }
+            }
+        });
+        if kind == Kind::Demo {
+            return;
+        }
+        let bridge = self.chat.bridge().clone();
+        ui.horizontal(|ui| {
+            let button_w = 64.0;
+            ui.add_enabled(
+                matches!(bridge, Bridge::Disconnected { .. }),
+                TextEdit::singleline(&mut self.endpoint_input)
+                    .hint_text("既存jcodeのソケットパス（例: …/jcode-api.sock）")
+                    .desired_width((ui.available_width() - button_w - 8.0).max(40.0)),
+            );
+            let (label, connect) = match bridge {
+                Bridge::Disconnected { .. } => ("接続", true),
+                _ => ("切断", false),
+            };
+            let enabled = !connect || !self.endpoint_input.trim().is_empty();
+            if ui
+                .add_enabled(
+                    enabled,
+                    egui::Button::new(label).min_size(egui::vec2(button_w, 0.0)),
+                )
+                .clicked()
+            {
+                if connect {
+                    self.connect();
+                } else {
+                    self.controller.disconnect();
+                }
+            }
+        });
+        let active = self.chat.active();
+        let ready = active.and_then(|s| match &s.link {
+            Link::Ready {
+                provider, model, ..
+            } => Some((s, provider, model)),
+            _ => None,
+        });
+        let status = match (&bridge, ready) {
+            (Bridge::Disconnected { reason: None }, _) => {
+                "未接続 — 接続するまで何も送りません".to_owned()
+            }
+            (Bridge::Disconnected { reason: Some(r) }, _) => format!("未接続 — {r}"),
+            (Bridge::Connecting, _) => {
+                "接続中…（ブリッジ・隔離セッション・ツール無効化を確認しています）".into()
+            }
+            // logical readiness: C1 holds no socket between turns and re-checks on every Send
+            (Bridge::Connected, Some(_)) => {
+                "接続設定済み — 送信ごとに再確認（隔離セッション・ツール無効化）".into()
+            }
+            (Bridge::Connected, None) => {
+                "このチャットは未準備です（jcodeの接続設定は別のチャットで済み）".into()
+            }
+        };
+        let color = match bridge {
+            Bridge::Connected => p.ok,
+            Bridge::Connecting => p.muted,
+            Bridge::Disconnected { .. } => p.warn,
+        };
+        line(ui, RichText::new(status).color(color));
+        // the rest scrolls in a bounded area (at most half, leaving the messages ≥ 60 px when
+        // possible), so a long error/notice/route never pushes the composer away and the notice
+        // stays readable by scrolling
+        let left = room - ui.min_rect().height();
+        let max = (left * 0.5).min(left - 60.0).max(36.0);
+        ScrollArea::vertical()
+            .id_salt("connection-details")
+            .max_height(max)
+            .min_scrolled_height(max)
+            .auto_shrink([false, true])
+            .show(ui, |ui| self.connection_details(ui, ready));
+    }
+
+    fn connection_details(
+        &self,
+        ui: &mut egui::Ui,
+        ready: Option<(&Session, &Option<String>, &Option<String>)>,
+    ) {
+        let p = pal(ui);
+        if let Some(err) = &self.chat.error {
+            Frame::new()
+                .fill(p.error_bg)
+                .stroke(Stroke::new(1.0, p.error))
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(Margin::same(6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(
+                        Label::new(
+                            RichText::new(format!("接続エラー: {}", prose(err))).color(p.error),
+                        )
+                        .wrap(),
+                    );
+                });
+        }
+        // essential, so it wraps instead of hiding behind a truncation tooltip
+        ui.add(Label::new(RichText::new(REAL_CHAT_NOTICE).small().color(p.muted)).wrap());
+        if let Some((s, provider, model)) = ready {
+            let route = match (provider, model) {
+                (None, None) => "経路（jcodeの報告）: 未報告".to_owned(),
+                (p, m) => format!(
+                    "経路（jcodeの報告）: {} / {}",
+                    p.as_deref().unwrap_or("未報告"),
+                    m.as_deref().unwrap_or("未報告")
+                ),
+            };
+            line(ui, RichText::new(route).small().color(p.muted));
+            let verified = if s.verified {
+                "実応答: 受信済み（このチャット）"
+            } else {
+                "初回の実応答: 未確認（送信して返答が届くまで分かりません）"
+            };
+            line(ui, RichText::new(verified).small().color(p.muted));
+        }
+    }
+
     fn composer_ui(&mut self, ui: &mut egui::Ui) {
         let p = pal(ui);
-        let loading = self.chat.active().is_some_and(|s| s.is_loading());
+        let active = self.chat.active();
+        let loading = active.is_some_and(Session::is_loading);
+        let request = active.and_then(|s| s.request.as_ref());
+        let cancellable = request.is_some_and(|r| !r.cancelling);
+        let real_turn = request.is_some();
+        let sendable = match (self.kind(), active) {
+            (Kind::Demo, s) => s.is_none_or(Session::can_send),
+            (Kind::Real, Some(s)) => s.can_send() && *self.chat.bridge() == Bridge::Connected,
+            (Kind::Real, None) => false,
+        };
         let id = ui.make_persistent_id("composer");
         let was_focused = ui.memory(|m| m.has_focus(id));
         let mut send = false;
+        let mut cancel = false;
         Frame::new()
             .fill(p.surface)
             .stroke(Stroke::new(1.0, p.border))
@@ -617,7 +910,7 @@ impl NativeApp {
             .inner_margin(Margin::symmetric(12, 8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let button_w = 64.0;
+                    let button_w = 80.0;
                     let edit = TextEdit::multiline(&mut self.composer)
                         .id(id)
                         .hint_text("メッセージを入力（Enterで送信・Shift+Enterで改行）")
@@ -630,13 +923,19 @@ impl NativeApp {
                         r.request_focus();
                         self.focus_composer = false;
                     }
-                    let can_send = !loading && !self.composer.trim().is_empty();
-                    let b = ui.add_enabled(
-                        can_send,
-                        egui::Button::new("送信").min_size(egui::vec2(button_w, 32.0)),
-                    );
-                    if b.clicked() {
-                        send = true;
+                    if real_turn {
+                        let b = ui.add_enabled(
+                            cancellable,
+                            egui::Button::new("キャンセル").min_size(egui::vec2(button_w, 32.0)),
+                        );
+                        cancel = b.clicked();
+                    } else {
+                        let can_send = sendable && !self.composer.trim().is_empty();
+                        let b = ui.add_enabled(
+                            can_send,
+                            egui::Button::new("送信").min_size(egui::vec2(button_w, 32.0)),
+                        );
+                        send = b.clicked();
                     }
                 });
             });
@@ -675,20 +974,41 @@ impl NativeApp {
             // a composition cannot outlive focus; egui interrupts it on blur
             self.guard = ImeGuard::default();
         }
-        if send {
-            let now = ui.input(|i| i.time);
-            if self.chat.send(self.composer.trim(), now) {
-                self.composer.clear();
-                self.pane = Pane::Chat;
-            }
-            self.focus_composer = true;
+        if cancel && self.chat.cancelling() {
+            self.controller.cancel();
         }
-        let hint = if loading {
-            "デモ応答の生成中は送信できません"
-        } else {
-            "Enterで送信 · Shift+Enterで改行 · 変換中のEnterは送信しません"
-        };
+        if send {
+            self.send(ui.input(|i| i.time));
+        }
+        let hint = self.composer_hint(loading);
         line(ui, RichText::new(hint).small().color(p.muted));
+    }
+
+    fn composer_hint(&self, loading: bool) -> &'static str {
+        let active = self.chat.active();
+        if self.kind() == Kind::Demo {
+            return if loading {
+                "デモ応答の生成中は送信できません"
+            } else {
+                "Enterで送信 · Shift+Enterで改行 · 変換中のEnterは送信しません"
+            };
+        }
+        match (self.chat.bridge(), active.map(|s| &s.link)) {
+            (_, Some(Link::Uncertain)) => {
+                "前回の送信結果が不明です。自動再送しません — 新しいチャットで続けてください"
+            }
+            (_, Some(Link::Closed(_))) => {
+                "このチャットのセッションは終了しました — 新しいチャットで続けてください"
+            }
+            _ if loading => "実応答を待っています — キャンセルできます",
+            (Bridge::Connecting, _) | (_, Some(Link::Binding)) => "セッションを準備中です…",
+            (Bridge::Connected, Some(Link::Ready { .. })) => {
+                "Enterで送信 · Shift+Enterで改行 · 変換中のEnterは送信しません"
+            }
+            _ => {
+                "未接続です — 上でエンドポイントを指定して接続してください（下書きは保持されます）"
+            }
+        }
     }
 
     fn monitor_ui(&mut self, ui: &mut egui::Ui) {
@@ -696,15 +1016,23 @@ impl NativeApp {
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(ui.available_width());
             line(ui, RichText::new("状態").strong());
-            row(ui, Prov::Fact, "接続: 未接続（モデル・Jev・daemonなし）");
-            row(ui, Prov::Fact, "作業対象: 未確認 · 書き込み権限なし");
-            row(ui, Prov::Fact, "履歴: このウィンドウのメモリ内のみ");
+            let link = match self.chat.bridge() {
+                Bridge::Connected => "jcode接続設定済み（送信ごとに再確認・AIの応答はチャットごとに確認）",
+                Bridge::Connecting => "jcodeブリッジに接続中",
+                Bridge::Disconnected { .. } => "未接続",
+            };
+            row(ui, Prov::Fact, &format!("チャット接続: {link}"));
+            row(ui, Prov::Fact, "作業対象: なし · 書き込み権限なし（ツール無効）");
+            row(ui, Prov::Fact, "この画面の履歴はメモリ内のみ（このアプリはファイルに保存しません）");
+            row(ui, Prov::Unknown, "jcode側の保存: 不明（実会話の送信内容は保存される場合あり・閉じても削除の保証なし）");
             match &self.font {
                 FontStatus::Loaded { path } => row(ui, Prov::Fact, &format!("日本語フォント: {path}")),
                 FontStatus::Missing => row(ui, Prov::Fact, "Japanese font not found / 日本語フォントなし"),
             }
-            let demo = self.chat.sessions().iter().flat_map(|s| &s.messages).filter(|m| m.role != Role::User).count();
-            row(ui, Prov::Demo, &format!("デモ応答: {demo}件（このウィンドウ）"));
+            let demo = self.chat.sessions().iter().flat_map(|s| &s.messages).filter(|m| matches!(m.role, Role::Demo | Role::DemoError)).count();
+            if demo > 0 {
+                row(ui, Prov::Demo, &format!("デモ応答: {demo}件（このウィンドウ）"));
+            }
             ui.add_space(8.0);
             line(ui, RichText::new("H₂O メモリ / ワーカー / ゴール").strong());
             if let Some(err) = &self.monitor.last_error {
@@ -717,6 +1045,10 @@ impl NativeApp {
                         ui.add(Label::new(RichText::new(format!("読み込めませんでした（表示中の内容は変わりません）: {err}")).color(p.error)).wrap());
                     });
             }
+            // ordinary chat is not an H₂O/Jev/Swarm connection; it never marks these live
+            row(ui, Prov::Unknown, "H₂O: 不明（チャット接続とは別）");
+            row(ui, Prov::Unknown, "Jev: 不明（使用しません）");
+            row(ui, Prov::Unknown, "Swarm: 不明（チャット接続とは別）");
             match &self.monitor.snapshot {
                 None => {
                     row(ui, Prov::Unknown, "メモリ: 不明（未接続）");

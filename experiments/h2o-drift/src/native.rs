@@ -1,10 +1,13 @@
-//! Pure state for the native reception UI: in-memory sessions, deterministic demo replies, the
-//! composer's Enter/IME decision, layout breakpoints and a safe read-only snapshot presentation.
+//! Pure state for the native reception UI: in-memory sessions, real-chat state driven by
+//! [`ChatEvent`]s, explicitly chosen deterministic demo replies, the composer's Enter/IME
+//! decision, layout breakpoints and a safe read-only snapshot presentation.
 //!
-//! Boundaries: nothing here connects to a model, Jev, a daemon or the network, and nothing is
+//! Boundaries: nothing here performs I/O to a model, Jev, a daemon or the network (only the
+//! controller in [`crate::chat_transport`] does, after an explicit connect), and nothing is
 //! persisted. The only I/O is an explicit user-chosen snapshot file, read and validated by the
 //! accepted gate in [`crate::ui`]; the view is then decoded from the already-validated bytes with
 //! the real monitor types and keeps no observation output/error or context bytes.
+use crate::chat_transport::ChatEvent;
 use crate::drift::{Decision, Signal};
 use crate::monitor::{Action, BranchSpec, Checkpoint, Receipt};
 use crate::ui::{self, SnapshotError};
@@ -19,11 +22,24 @@ const TITLE_CHARS: usize = 28;
 
 // ---- chat ------------------------------------------------------------------------------------
 
+/// What a conversation talks to, fixed when it is created. Real is the default; Demo is only
+/// ever chosen explicitly and never reaches the SDK.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Kind {
+    #[default]
+    Real,
+    Demo,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     User,
     Demo,
     DemoError,
+    /// Final assistant text exactly as the SDK reported it.
+    Assistant,
+    /// A real failure notice. Never a reply and never demo text.
+    Notice,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,27 +48,105 @@ pub struct Message {
     pub text: String,
 }
 
+/// The SDK session behind one real conversation. A conversation binds at most once, so a reply
+/// can only land in the conversation that asked for it, and old history is never continued by a
+/// session that did not see it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// Never bound; binds on the next explicit connect or new chat while connected.
+    Unbound,
+    /// connect/new_session requested; waiting for `Ready`.
+    Binding,
+    /// Bridge, isolated session and tool exclusion are ready. Says nothing about the provider.
+    Ready {
+        session_id: String,
+        provider: Option<String>,
+        model: Option<String>,
+    },
+    /// A send's outcome is unknown. No further send here: no blind resend.
+    Uncertain,
+    /// The SDK session is gone or never came up. History stays readable.
+    Closed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pending {
+    pub request_id: u64,
+    pub text: String,
+    pub cancelling: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Bridge {
+    Disconnected { reason: Option<String> },
+    Connecting,
+    Connected,
+}
+
 #[derive(Debug)]
 pub struct Session {
     pub id: u64,
     pub title: String,
     pub messages: Vec<Message>,
+    pub kind: Kind,
+    pub link: Link,
+    /// The real request in flight.
+    pub request: Option<Pending>,
+    /// An actual SDK reply has arrived in this conversation.
+    pub verified: bool,
+    /// Text of a definitely failed send, handed back to the composer once.
+    draft: Option<String>,
     /// (due time, user input) of the pending demo reply.
     pending: Option<(f64, String)>,
 }
 
 impl Session {
     pub fn is_loading(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.request.is_some()
+    }
+
+    pub fn can_send(&self) -> bool {
+        match self.kind {
+            Kind::Demo => self.pending.is_none(),
+            Kind::Real => matches!(self.link, Link::Ready { .. }) && self.request.is_none(),
+        }
+    }
+
+    fn notice(&mut self, text: String) {
+        self.messages.push(Message {
+            role: Role::Notice,
+            text,
+        });
     }
 }
 
+const SWITCHED: &str = "別のチャットで新しいセッションを開いたため終了しました";
+
 /// History lives only in this value: it is never written anywhere.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Chat {
     sessions: Vec<Session>,
     active: Option<u64>,
     next_id: u64,
+    next_request: u64,
+    mode: Kind,
+    bridge: Bridge,
+    /// Last connection/setup error, shown until the next connect attempt.
+    pub error: Option<String>,
+}
+
+impl Default for Chat {
+    fn default() -> Self {
+        Self {
+            sessions: Vec::new(),
+            active: None,
+            next_id: 0,
+            next_request: 0,
+            mode: Kind::Real,
+            bridge: Bridge::Disconnected { reason: None },
+            error: None,
+        }
+    }
 }
 
 impl Chat {
@@ -71,12 +165,38 @@ impl Chat {
 
     fn active_mut(&mut self) -> Option<&mut Session> {
         let id = self.active?;
+        self.session_mut(id)
+    }
+
+    fn session_mut(&mut self, id: u64) -> Option<&mut Session> {
         self.sessions.iter_mut().find(|s| s.id == id)
     }
 
-    /// Starts a new chat, reusing the active one if it is still empty.
+    pub fn mode(&self) -> Kind {
+        self.mode
+    }
+
+    pub fn bridge(&self) -> &Bridge {
+        &self.bridge
+    }
+
+    /// Explicit mode choice. An active conversation of the other kind is left, not changed.
+    pub fn set_mode(&mut self, kind: Kind) {
+        self.mode = kind;
+        if self.active().is_some_and(|s| s.kind != kind) {
+            self.active = None;
+        }
+    }
+
+    /// Starts a new chat of the current mode, reusing the active one if it is still empty and
+    /// usable.
     pub fn new_session(&mut self) -> u64 {
-        if let Some(s) = self.active().filter(|s| s.messages.is_empty()) {
+        let mode = self.mode;
+        if let Some(s) = self.active().filter(|s| {
+            s.messages.is_empty()
+                && s.kind == mode
+                && matches!(s.link, Link::Unbound | Link::Binding | Link::Ready { .. })
+        }) {
             return s.id;
         }
         self.next_id += 1;
@@ -85,6 +205,11 @@ impl Chat {
             id,
             title: "新しいチャット".into(),
             messages: Vec::new(),
+            kind: mode,
+            link: Link::Unbound,
+            request: None,
+            verified: false,
+            draft: None,
             pending: None,
         });
         self.active = Some(id);
@@ -92,22 +217,29 @@ impl Chat {
     }
 
     pub fn select(&mut self, id: u64) -> bool {
-        let found = self.sessions.iter().any(|s| s.id == id);
-        if found {
-            self.active = Some(id);
-        }
-        found
+        let Some(kind) = self.sessions.iter().find(|s| s.id == id).map(|s| s.kind) else {
+            return false;
+        };
+        self.active = Some(id);
+        self.mode = kind;
+        true
     }
 
-    /// Queues a deterministic demo reply. Refuses blank input or while a reply is pending.
+    /// Queues a deterministic demo reply in a demo conversation. Refuses blank input, a pending
+    /// reply, or a real conversation (which never gets a demo reply).
     pub fn send(&mut self, text: &str, now: f64) -> bool {
-        if text.trim().is_empty() || self.active().is_some_and(Session::is_loading) {
+        if text.trim().is_empty() {
             return false;
         }
-        if self.active.is_none() {
+        if self.active.is_none() && self.mode == Kind::Demo {
             self.new_session();
         }
-        let s = self.active_mut().expect("active session exists");
+        let Some(s) = self.active_mut() else {
+            return false;
+        };
+        if s.kind != Kind::Demo || !s.can_send() {
+            return false;
+        }
         if s.messages.is_empty() {
             s.title = one_line(text.trim(), TITLE_CHARS);
         }
@@ -119,7 +251,7 @@ impl Chat {
         true
     }
 
-    /// Resolves every due reply, in any session. Returns whether anything changed.
+    /// Resolves every due demo reply, in any session. Returns whether anything changed.
     pub fn tick(&mut self, now: f64) -> bool {
         let mut changed = false;
         for s in &mut self.sessions {
@@ -137,6 +269,204 @@ impl Chat {
             .iter()
             .filter_map(|s| s.pending.as_ref().map(|p| p.0))
             .reduce(f64::min)
+    }
+
+    // ---- real chat ---------------------------------------------------------------------------
+
+    /// True while a controller event is expected, so the UI keeps polling.
+    pub fn awaiting(&self) -> bool {
+        self.bridge == Bridge::Connecting
+            || self
+                .sessions
+                .iter()
+                .any(|s| s.request.is_some() || s.link == Link::Binding)
+    }
+
+    /// The conversation an explicit connect binds: the active one if it is real, empty and never
+    /// bound, otherwise a fresh one. Marks it binding.
+    pub fn connect_target(&mut self) -> u64 {
+        self.mode = Kind::Real;
+        let reusable = self.active().is_some_and(|s| {
+            s.kind == Kind::Real && s.messages.is_empty() && s.link == Link::Unbound
+        });
+        let id = if reusable {
+            self.active.expect("checked")
+        } else {
+            self.active = None;
+            self.new_session()
+        };
+        self.error = None;
+        self.bridge = Bridge::Connecting;
+        self.mark_binding(id);
+        id
+    }
+
+    /// `id` now owns the controller's single session; any other was closed by the controller.
+    pub fn mark_binding(&mut self, id: u64) {
+        for s in &mut self.sessions {
+            if s.id == id {
+                s.link = Link::Binding;
+            } else if matches!(s.link, Link::Binding | Link::Ready { .. }) {
+                s.link = Link::Closed(SWITCHED.into());
+            }
+        }
+    }
+
+    /// The controller refused locally; nothing was started.
+    pub fn rejected(&mut self, id: u64, message: &str) {
+        if let Some(s) = self.session_mut(id).filter(|s| s.link == Link::Binding) {
+            s.link = Link::Unbound;
+        }
+        if self.bridge == Bridge::Connecting {
+            self.bridge = Bridge::Disconnected { reason: None };
+        }
+        self.error = Some(one_line(message, 300));
+    }
+
+    /// Validates a real send from the active conversation and allocates its request id.
+    pub fn prepare(&mut self, text: &str) -> Option<(u64, u64)> {
+        let connected = self.bridge == Bridge::Connected;
+        let s = self.active()?;
+        if text.trim().is_empty() || s.kind != Kind::Real || !s.can_send() || !connected {
+            return None;
+        }
+        let id = s.id;
+        self.next_request += 1;
+        Some((id, self.next_request))
+    }
+
+    /// The controller accepted (enqueued) the send.
+    pub fn sent(&mut self, id: u64, request_id: u64, text: &str) {
+        let Some(s) = self.session_mut(id) else {
+            return;
+        };
+        if s.messages.is_empty() {
+            s.title = one_line(text.trim(), TITLE_CHARS);
+        }
+        s.messages.push(Message {
+            role: Role::User,
+            text: text.to_owned(),
+        });
+        s.request = Some(Pending {
+            request_id,
+            text: text.to_owned(),
+            cancelling: false,
+        });
+    }
+
+    /// Marks the active request as being cancelled. Returns whether there was one to cancel.
+    pub fn cancelling(&mut self) -> bool {
+        match self.active_mut().and_then(|s| s.request.as_mut()) {
+            Some(p) if !p.cancelling => {
+                p.cancelling = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Hands back the draft of a definitely failed send in `id`, once.
+    pub fn take_draft(&mut self, id: u64) -> Option<String> {
+        self.session_mut(id)?.draft.take()
+    }
+
+    /// Applies one controller event. Events for an unknown, other or finished request are
+    /// dropped, so a reply is shown once and only in its origin conversation.
+    pub fn apply(&mut self, event: ChatEvent) {
+        match event {
+            ChatEvent::Connecting => {
+                self.bridge = Bridge::Connecting;
+                self.error = None;
+            }
+            ChatEvent::Ready {
+                conversation_id,
+                session_id,
+                provider,
+                model,
+            } => {
+                if let Some(s) = self
+                    .session_mut(conversation_id)
+                    .filter(|s| s.link == Link::Binding)
+                {
+                    s.link = Link::Ready {
+                        session_id,
+                        provider,
+                        model,
+                    };
+                    self.bridge = Bridge::Connected;
+                }
+            }
+            ChatEvent::Reply {
+                conversation_id,
+                request_id,
+                text,
+            } => {
+                if let Some(s) = self.session_mut(conversation_id).filter(|s| {
+                    s.request
+                        .as_ref()
+                        .is_some_and(|p| p.request_id == request_id)
+                }) {
+                    s.request = None;
+                    s.verified = true;
+                    s.messages.push(Message {
+                        role: Role::Assistant,
+                        text,
+                    });
+                }
+            }
+            ChatEvent::Failed {
+                conversation_id,
+                request_id,
+                message,
+                uncertain,
+            } => {
+                let message = one_line(&message, 300);
+                match (
+                    conversation_id.and_then(|c| self.session_mut(c)),
+                    request_id,
+                ) {
+                    (Some(s), Some(r)) => {
+                        if !s.request.as_ref().is_some_and(|p| p.request_id == r) {
+                            return; // stale: another or an already finished request
+                        }
+                        let p = s.request.take().expect("checked");
+                        if uncertain {
+                            s.link = Link::Uncertain;
+                            s.notice(format!(
+                                "結果不明: {message} — 送信が届いたか確認できません。自動再送しません。新しいチャットで続けてください。"
+                            ));
+                        } else {
+                            s.notice(format!(
+                                "送信できませんでした: {message}（入力を下書きに戻しました。再送は送信で明示的に行えます）"
+                            ));
+                            s.draft = Some(p.text);
+                        }
+                    }
+                    (Some(s), None) => {
+                        if matches!(s.link, Link::Binding | Link::Ready { .. }) {
+                            s.link = Link::Closed(message.clone());
+                        }
+                        self.error = Some(message);
+                    }
+                    (None, _) => self.error = Some(message),
+                }
+            }
+            ChatEvent::Disconnected { message } => {
+                let message = one_line(&message, 300);
+                for s in &mut self.sessions {
+                    if s.request.take().is_some() {
+                        // the controller reports this itself first; never leave it pending
+                        s.link = Link::Uncertain;
+                        s.notice("結果不明: 応答前に切断されました。自動再送しません。".into());
+                    } else if matches!(s.link, Link::Binding | Link::Ready { .. }) {
+                        s.link = Link::Closed(message.clone());
+                    }
+                }
+                self.bridge = Bridge::Disconnected {
+                    reason: Some(message),
+                };
+            }
+        }
     }
 }
 

@@ -5,7 +5,7 @@
 
 use eframe::egui::{self, Event, ImeEvent, Key, Modifiers, Rect, Shape, pos2, vec2};
 use h2o_drift_prototype::native::{
-    Chat, DEMO_DELAY_SECS, ImeGuard, KeyInput, Layout, Monitor, ReceiptState, Role, Tri,
+    Chat, DEMO_DELAY_SECS, ImeGuard, KeyInput, Kind, Layout, Monitor, ReceiptState, Role, Tri,
     demo_reply, layout_for, one_line, snapshot_view,
 };
 use h2o_drift_prototype::native_ui::{FontStatus, NativeApp, install_japanese_font};
@@ -76,9 +76,11 @@ impl Harness {
     fn new(width: f32, height: f32) -> Self {
         let ctx = egui::Context::default();
         let font = install_japanese_font(&ctx);
+        let mut app = NativeApp::new(font);
+        app.set_mode(Kind::Demo); // these tests cover the explicitly chosen demo
         let mut h = Self {
             ctx,
-            app: NativeApp::new(font),
+            app,
             time: 0.0,
             size: vec2(width, height),
         };
@@ -148,6 +150,7 @@ fn joined(p: &[Painted]) -> String {
 #[test]
 fn chat_starts_empty_and_send_creates_session_with_delayed_demo_reply() {
     let mut chat = Chat::default();
+    chat.set_mode(Kind::Demo); // demo is an explicit choice; real chat is the default
     assert!(
         chat.sessions().is_empty(),
         "empty state must have no sessions"
@@ -197,6 +200,7 @@ fn demo_reply_is_deterministic_labelled_and_never_claims_live_answer() {
 #[test]
 fn new_chat_reuses_empty_session_and_select_switches_history() {
     let mut chat = Chat::default();
+    chat.set_mode(Kind::Demo); // demo is an explicit choice; real chat is the default
     let first = chat.new_session();
     assert_eq!(
         chat.new_session(),
@@ -650,8 +654,9 @@ fn gui_session_selection_in_sidebar_switches_conversation() {
         "both in history: {shown}"
     );
     assert!(
-        shown.contains("保存されません"),
-        "in-memory scope stated: {shown}"
+        // was "保存されません": local memory-only scope, now with the daemon-side caveat
+        shown.contains("この画面の履歴はメモリ内のみ") && shown.contains("保存される場合があります"),
+        "local scope and daemon-side caveat stated: {shown}"
     );
     let first = h.app.chat().sessions()[0].id;
     assert!(h.app.select_session(first));
