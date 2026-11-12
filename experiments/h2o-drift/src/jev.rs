@@ -271,7 +271,9 @@ fn parse(body: &[u8]) -> Option<Parsed> {
     if !values.into_iter().all(unit) {
         return None;
     }
-    let index = LABELS.iter().position(|(label, ..)| *label == answer.choice)?;
+    let index = LABELS
+        .iter()
+        .position(|(label, ..)| *label == answer.choice)?;
     let probability = values[index];
     values.iter().all(|p| *p <= probability).then_some(Parsed {
         index,

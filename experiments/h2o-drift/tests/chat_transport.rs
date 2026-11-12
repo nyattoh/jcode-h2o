@@ -5,7 +5,9 @@ mod chat_support;
 mod support;
 
 use chat_support::*;
-use h2o_drift_prototype::chat_transport::{CHAT_SYSTEM_PROMPT, ChatController, ChatEvent, ConnectConfig};
+use h2o_drift_prototype::chat_transport::{
+    CHAT_SYSTEM_PROMPT, ChatController, ChatEvent, ConnectConfig,
+};
 use jcode_sdk::{ApiEvent, ApiRequest, PermissionDecision, TurnStopReason, api::ErrorCode};
 use std::{
     sync::Arc,
@@ -23,9 +25,12 @@ fn failed(events: &[ChatEvent]) -> (Option<u64>, Option<u64>, String, bool) {
     events
         .iter()
         .find_map(|e| match e {
-            ChatEvent::Failed { conversation_id, request_id, message, uncertain } => {
-                Some((*conversation_id, *request_id, message.clone(), *uncertain))
-            }
+            ChatEvent::Failed {
+                conversation_id,
+                request_id,
+                message,
+                uncertain,
+            } => Some((*conversation_id, *request_id, message.clone(), *uncertain)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("no Failed event in {events:#?}"))
@@ -35,14 +40,21 @@ fn replies(events: &[ChatEvent]) -> Vec<(u64, u64, String)> {
     events
         .iter()
         .filter_map(|e| match e {
-            ChatEvent::Reply { conversation_id, request_id, text } => Some((*conversation_id, *request_id, text.clone())),
+            ChatEvent::Reply {
+                conversation_id,
+                request_id,
+                text,
+            } => Some((*conversation_id, *request_id, text.clone())),
             _ => None,
         })
         .collect()
 }
 
 fn script_turn(f: impl Fn(&str, &str) -> Vec<Step> + Send + Sync + 'static) -> Script {
-    Script { turn: Arc::new(f), ..Script::default() }
+    Script {
+        turn: Arc::new(f),
+        ..Script::default()
+    }
 }
 
 // --- setup / tool enforcement ---
@@ -52,9 +64,17 @@ fn setup_order_is_hello_create_configure_verify_before_any_prompt() {
     let h = Harness::new(Script::default());
     let mut c = h.controller();
     let events = connect_ready(&h, &mut c, 7);
-    assert!(matches!(events.first(), Some(ChatEvent::Connecting)), "{events:#?}");
+    assert!(
+        matches!(events.first(), Some(ChatEvent::Connecting)),
+        "{events:#?}"
+    );
     match events.last().unwrap() {
-        ChatEvent::Ready { conversation_id, session_id, provider, model } => {
+        ChatEvent::Ready {
+            conversation_id,
+            session_id,
+            provider,
+            model,
+        } => {
             assert_eq!(*conversation_id, 7);
             assert_eq!(session_id, "sess-0");
             assert_eq!(provider.as_deref(), Some("scripted-provider"));
@@ -67,22 +87,46 @@ fn setup_order_is_hello_create_configure_verify_before_any_prompt() {
     assert_eq!(sends(&h), 0);
 
     let reqs = h.requests();
-    let pos = |pred: &dyn Fn(&ApiRequest) -> bool| reqs.iter().position(|r| pred(r)).unwrap();
-    let hello = pos(&|r| matches!(r, ApiRequest::Hello { supports_user_response: false, .. }));
+    let pos = |pred: &dyn Fn(&ApiRequest) -> bool| reqs.iter().position(pred).unwrap();
+    let hello = pos(&|r| {
+        matches!(
+            r,
+            ApiRequest::Hello {
+                supports_user_response: false,
+                ..
+            }
+        )
+    });
     let create = pos(&|r| matches!(r, ApiRequest::CreateSession { .. }));
     let configure = pos(&|r| matches!(r, ApiRequest::ConfigureTools { .. }));
     let list = pos(&|r| matches!(r, ApiRequest::ListTools { .. }));
-    assert!(hello < create && create < configure && configure < list, "{reqs:#?}");
+    assert!(
+        hello < create && create < configure && configure < list,
+        "{reqs:#?}"
+    );
     assert_eq!(h.endpoints(), vec![std::path::PathBuf::from(TEST_ENDPOINT)]);
 
     for r in &reqs {
         match r {
-            ApiRequest::CreateSession { working_dir, system_prompt } => {
+            ApiRequest::CreateSession {
+                working_dir,
+                system_prompt,
+            } => {
                 assert_eq!(system_prompt.as_deref(), Some(CHAT_SYSTEM_PROMPT));
-                let dir = std::path::PathBuf::from(working_dir.as_deref().expect("explicit neutral working_dir"));
+                let dir = std::path::PathBuf::from(
+                    working_dir
+                        .as_deref()
+                        .expect("explicit neutral working_dir"),
+                );
                 assert!(dir.is_absolute(), "{dir:?}");
-                assert!(!dir.starts_with(std::env::current_dir().unwrap()), "must not use the process cwd: {dir:?}");
-                assert!(!dir.starts_with(env!("CARGO_MANIFEST_DIR")), "must not use the project: {dir:?}");
+                assert!(
+                    !dir.starts_with(std::env::current_dir().unwrap()),
+                    "must not use the process cwd: {dir:?}"
+                );
+                assert!(
+                    !dir.starts_with(env!("CARGO_MANIFEST_DIR")),
+                    "must not use the project: {dir:?}"
+                );
                 let entries = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
                 assert_eq!(entries, 0, "neutral dir must be empty");
             }
@@ -95,7 +139,10 @@ fn setup_order_is_hello_create_configure_verify_before_any_prompt() {
             | ApiRequest::ListTools { .. }
             | ApiRequest::Ping
             | ApiRequest::GetRuntimeInfo { .. } => {}
-            other => panic!("unexpected request during setup: {}", serde_json::to_string(other).unwrap()),
+            other => panic!(
+                "unexpected request during setup: {}",
+                serde_json::to_string(other).unwrap()
+            ),
         }
     }
 }
@@ -106,14 +153,24 @@ fn assert_setup_refused(script: Script, needle: &str, max_requests: &[&str]) {
     c.connect(h.config(), 1).unwrap();
     let events = wait_for(&mut c, WAIT, is_disconnected);
     let (conv, req, message, uncertain) = failed(&events);
-    assert_eq!((conv, req, uncertain), (Some(1), None, false), "{events:#?}");
+    assert_eq!(
+        (conv, req, uncertain),
+        (Some(1), None, false),
+        "{events:#?}"
+    );
     assert!(message.contains(needle), "{message}");
     assert!(!events.iter().any(is_ready), "{events:#?}");
     assert!(c.send(1, 1, "hello".into()).is_err());
     assert_eq!(sends(&h), 0);
     for r in h.requests() {
-        let name = serde_json::to_value(&r).unwrap()["req"].as_str().unwrap().to_string();
-        assert!(max_requests.contains(&name.as_str()), "unexpected {name} in refused setup");
+        let name = serde_json::to_value(&r).unwrap()["req"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            max_requests.contains(&name.as_str()),
+            "unexpected {name} in refused setup"
+        );
     }
 }
 
@@ -126,19 +183,36 @@ fn missing_session_tools_capability_fails_closed_before_creating_a_session() {
 
 #[test]
 fn configure_tools_error_fails_closed() {
-    let script = Script { configure: Reply::Error, ..Script::default() };
-    assert_setup_refused(script, "configure_tools failure", &["hello", "create_session", "configure_tools"]);
+    let script = Script {
+        configure: Reply::Error,
+        ..Script::default()
+    };
+    assert_setup_refused(
+        script,
+        "configure_tools failure",
+        &["hello", "create_session", "configure_tools"],
+    );
 }
 
 #[test]
 fn effective_tools_not_empty_fails_closed() {
-    let script = Script { effective_tools: vec!["bash".into()], ..Script::default() };
-    assert_setup_refused(script, "bash", &["hello", "create_session", "configure_tools", "list_tools"]);
+    let script = Script {
+        effective_tools: vec!["bash".into()],
+        ..Script::default()
+    };
+    assert_setup_refused(
+        script,
+        "bash",
+        &["hello", "create_session", "configure_tools", "list_tools"],
+    );
 }
 
 #[test]
 fn silent_configure_ack_is_bounded_and_fails_closed() {
-    let script = Script { configure: Reply::Silent, ..Script::default() };
+    let script = Script {
+        configure: Reply::Silent,
+        ..Script::default()
+    };
     let h = Harness::new(script);
     let mut c = h.controller();
     let mut cfg = h.config();
@@ -146,7 +220,11 @@ fn silent_configure_ack_is_bounded_and_fails_closed() {
     let start = Instant::now();
     c.connect(cfg, 1).unwrap();
     let events = wait_for(&mut c, WAIT, is_disconnected);
-    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
     let (_, _, _, uncertain) = failed(&events);
     assert!(!uncertain);
     assert_eq!(sends(&h), 0);
@@ -160,7 +238,14 @@ fn route_is_only_what_the_harness_reported() {
     let mut c = h.controller();
     let events = connect_ready(&h, &mut c, 1);
     assert!(
-        matches!(events.last(), Some(ChatEvent::Ready { provider: None, model: None, .. })),
+        matches!(
+            events.last(),
+            Some(ChatEvent::Ready {
+                provider: None,
+                model: None,
+                ..
+            })
+        ),
         "{events:#?}"
     );
 }
@@ -169,7 +254,10 @@ fn route_is_only_what_the_harness_reported() {
 fn stuck_transport_is_bounded_by_the_controller_watchdog_without_blocking_caller() {
     let mut c = ChatController::with_transport_factory(|_| {
         thread::sleep(Duration::from_secs(3));
-        Err(jcode_sdk::Error::new(jcode_sdk::ErrorKind::ConnectFailed, "late"))
+        Err(jcode_sdk::Error::new(
+            jcode_sdk::ErrorKind::ConnectFailed,
+            "late",
+        ))
     });
     let cfg = ConnectConfig {
         endpoint: "stuck".into(),
@@ -178,7 +266,11 @@ fn stuck_transport_is_bounded_by_the_controller_watchdog_without_blocking_caller
     };
     let start = Instant::now();
     c.connect(cfg, 3).unwrap();
-    assert!(start.elapsed() < Duration::from_millis(50), "connect blocked {:?}", start.elapsed());
+    assert!(
+        start.elapsed() < Duration::from_millis(50),
+        "connect blocked {:?}",
+        start.elapsed()
+    );
     let events = wait_for(&mut c, Duration::from_secs(2), is_disconnected);
     assert!(start.elapsed() < Duration::from_secs(2));
     let (conv, req, _, uncertain) = failed(&events);
@@ -192,17 +284,30 @@ fn default_controller_uses_explicit_endpoint_only_and_never_starts_a_runtime() {
     let dir = support::TestDir::new();
     let endpoint = dir.path.join("no-harness-here.sock");
     let mut c = ChatController::new();
-    assert!(c.connect(ConnectConfig::default(), 1).is_err(), "empty default endpoint must be rejected");
+    assert!(
+        c.connect(ConnectConfig::default(), 1).is_err(),
+        "empty default endpoint must be rejected"
+    );
     c.connect(
-        ConnectConfig { endpoint: endpoint.clone(), request_timeout: Duration::from_secs(1), turn_timeout: Duration::from_secs(1) },
+        ConnectConfig {
+            endpoint: endpoint.clone(),
+            request_timeout: Duration::from_secs(1),
+            turn_timeout: Duration::from_secs(1),
+        },
         1,
     )
     .unwrap();
     let events = wait_for(&mut c, WAIT, is_disconnected);
     let (_, _, message, uncertain) = failed(&events);
     assert!(!uncertain);
-    assert!(message.contains("no-harness-here"), "actionable message naming the endpoint: {message}");
-    assert!(!endpoint.exists(), "no runtime may be started at the endpoint");
+    assert!(
+        message.contains("no-harness-here"),
+        "actionable message naming the endpoint: {message}"
+    );
+    assert!(
+        !endpoint.exists(),
+        "no runtime may be started at the endpoint"
+    );
     assert_eq!(std::fs::read_dir(&dir.path).unwrap().count(), 0);
 }
 
@@ -221,7 +326,10 @@ fn local_invalid_and_busy_conditions_are_rejected() {
     assert!(c.connect(zero, 1).is_err());
     connect_ready(&h, &mut c, 1);
     assert!(c.send(1, 1, "  \n".into()).is_err(), "blank text");
-    assert!(c.send(2, 1, "x".into()).is_err(), "conversation without session");
+    assert!(
+        c.send(2, 1, "x".into()).is_err(),
+        "conversation without session"
+    );
     c.send(1, 1, "x".into()).unwrap();
     assert!(c.send(1, 2, "y".into()).is_err(), "busy");
     assert!(c.new_session(2).is_err(), "busy");
@@ -247,15 +355,23 @@ fn send_produces_exactly_one_real_sdk_reply() {
     assert!(start.elapsed() < Duration::from_millis(50));
     let mut events = wait_for(&mut c, WAIT, is_terminal);
     events.extend(drain(&mut c, Duration::from_millis(300)));
-    assert_eq!(replies(&events), vec![(4, 11, "echo: こんにちは".to_string())], "{events:#?}");
+    assert_eq!(
+        replies(&events),
+        vec![(4, 11, "echo: こんにちは".to_string())],
+        "{events:#?}"
+    );
     assert!(!events.iter().any(|e| matches!(e, ChatEvent::Failed { .. })));
     let sent: Vec<_> = h
         .requests()
         .into_iter()
         .filter_map(|r| match r {
-            ApiRequest::SendMessage { session_id, content, system_reminder, images, .. } => {
-                Some((session_id, content, system_reminder, images.len()))
-            }
+            ApiRequest::SendMessage {
+                session_id,
+                content,
+                system_reminder,
+                images,
+                ..
+            } => Some((session_id, content, system_reminder, images.len())),
             _ => None,
         })
         .collect();
@@ -273,7 +389,10 @@ fn framing_replacement_and_retraction_select_final_text() {
             delta(s, Some("m1"), "draft"),
             done(s, Some("m1")),
             replace(s, Some("m1"), ""), // retracted after a provider retry
-            ev(ApiEvent::ReasoningDelta { session_id: s.into(), text: "thinking".into() }),
+            ev(ApiEvent::ReasoningDelta {
+                session_id: s.into(),
+                text: "thinking".into(),
+            }),
             delta(s, Some("m2"), "fin"),
             delta(s, Some("m2"), "al-typo"),
             replace(s, Some("m2"), "final"),
@@ -290,17 +409,27 @@ fn framing_replacement_and_retraction_select_final_text() {
 
 #[test]
 fn unframed_bridge_falls_back_to_aggregate_text() {
-    let h = Harness::new(script_turn(|s, _| vec![delta(s, None, "a"), delta(s, None, "b"), turn_done(s)]));
+    let h = Harness::new(script_turn(|s, _| {
+        vec![delta(s, None, "a"), delta(s, None, "b"), turn_done(s)]
+    }));
     let mut c = h.controller();
     connect_ready(&h, &mut c, 1);
     c.send(1, 1, "q".into()).unwrap();
-    assert_eq!(replies(&wait_for(&mut c, WAIT, is_terminal)), vec![(1, 1, "ab".to_string())]);
+    assert_eq!(
+        replies(&wait_for(&mut c, WAIT, is_terminal)),
+        vec![(1, 1, "ab".to_string())]
+    );
 }
 
 #[test]
 fn fully_retracted_or_empty_turn_is_failed_not_an_empty_reply() {
     let h = Harness::new(script_turn(|s, _| {
-        vec![delta(s, Some("m1"), "oops"), done(s, Some("m1")), replace(s, Some("m1"), ""), turn_done(s)]
+        vec![
+            delta(s, Some("m1"), "oops"),
+            done(s, Some("m1")),
+            replace(s, Some("m1"), ""),
+            turn_done(s),
+        ]
     }));
     let mut c = h.controller();
     connect_ready(&h, &mut c, 1);
@@ -311,7 +440,13 @@ fn fully_retracted_or_empty_turn_is_failed_not_an_empty_reply() {
     assert!(replies(&events).is_empty());
     // Definite failure keeps the session.
     c.send(1, 6, "again".into()).unwrap();
-    assert!(matches!(wait_for(&mut c, WAIT, is_terminal).last(), Some(ChatEvent::Failed { request_id: Some(6), .. })));
+    assert!(matches!(
+        wait_for(&mut c, WAIT, is_terminal).last(),
+        Some(ChatEvent::Failed {
+            request_id: Some(6),
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -325,7 +460,10 @@ fn stopped_or_errored_turn_is_failed_without_substitute_reply() {
                 message: "provider overloaded".into(),
                 provider_stop_reason: None,
             }),
-            ev(ApiEvent::Error { code: ErrorCode::Internal, message: "provider overloaded".into() }),
+            ev(ApiEvent::Error {
+                code: ErrorCode::Internal,
+                message: "provider overloaded".into(),
+            }),
         ]
     }));
     let mut c = h.controller();
@@ -343,13 +481,16 @@ fn stopped_or_errored_turn_is_failed_without_substitute_reply() {
 #[test]
 fn unexplained_error_mid_turn_is_uncertain_and_retires_session() {
     let h = Harness::new(script_turn(|_, _| {
-        vec![ev(ApiEvent::Error { code: ErrorCode::Internal, message: "bridge exploded".into() })]
+        vec![ev(ApiEvent::Error {
+            code: ErrorCode::Internal,
+            message: "bridge exploded".into(),
+        })]
     }));
     let mut c = h.controller();
     connect_ready(&h, &mut c, 1);
     c.send(1, 1, "q".into()).unwrap();
     let events = wait_for(&mut c, WAIT, is_disconnected);
-    assert_eq!(failed(&events).3, true);
+    assert!(failed(&events).3);
     assert!(c.send(1, 2, "q".into()).is_err());
 }
 
@@ -359,7 +500,11 @@ fn unexplained_error_mid_turn_is_uncertain_and_retires_session() {
 fn tool_attempt_despite_exclusion_fails_closed_and_cancels() {
     let h = Harness::new(script_turn(|s, _| {
         vec![
-            ev(ApiEvent::ToolStart { session_id: s.into(), call_id: "c1".into(), name: "bash".into() }),
+            ev(ApiEvent::ToolStart {
+                session_id: s.into(),
+                call_id: "c1".into(),
+                name: "bash".into(),
+            }),
             Step::Sleep(Duration::from_millis(200)),
             delta(s, Some("m1"), "I ran it"),
             done(s, Some("m1")),
@@ -401,7 +546,10 @@ fn permission_request_is_denied_never_auto_approved() {
             _ => None,
         })
         .collect();
-    assert!(!decisions.is_empty() && decisions.iter().all(|d| *d == PermissionDecision::Deny), "{decisions:?}");
+    assert!(
+        !decisions.is_empty() && decisions.iter().all(|d| *d == PermissionDecision::Deny),
+        "{decisions:?}"
+    );
 }
 
 // --- bounds, cancel, disconnect, uncertainty ---
@@ -422,19 +570,29 @@ fn turn_timeout_is_uncertain_and_never_blindly_resent() {
     let start = Instant::now();
     c.send(1, 9, "q".into()).unwrap();
     let mut events = wait_for(&mut c, WAIT, is_disconnected);
-    assert!(start.elapsed() < Duration::from_millis(1400), "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() < Duration::from_millis(1400),
+        "{:?}",
+        start.elapsed()
+    );
     events.extend(drain(&mut c, Duration::from_millis(1500)));
     let (conv, req, _, uncertain) = failed(&events);
     assert_eq!((conv, req, uncertain), (Some(1), Some(9), true));
     assert!(replies(&events).is_empty(), "{events:#?}");
-    assert!(c.send(1, 10, "q".into()).is_err(), "no send after uncertain outcome until reconnect");
+    assert!(
+        c.send(1, 10, "q".into()).is_err(),
+        "no send after uncertain outcome until reconnect"
+    );
     assert_eq!(sends(&h), 1);
 }
 
 #[test]
 fn confirmed_cancel_ends_turn_and_keeps_session() {
     let h = Harness::new(script_turn(|s, _| {
-        let mut steps = vec![delta(s, Some("m1"), "part"), Step::Sleep(Duration::from_millis(1500))];
+        let mut steps = vec![
+            delta(s, Some("m1"), "part"),
+            Step::Sleep(Duration::from_millis(1500)),
+        ];
         steps.extend(reply_steps(s, "not shown"));
         steps
     }));
@@ -453,7 +611,10 @@ fn confirmed_cancel_ends_turn_and_keeps_session() {
     assert!(!events.iter().any(is_disconnected), "{events:#?}");
     assert_eq!(h.count(|r| matches!(r, ApiRequest::Cancel { .. })), 1);
     c.send(1, 2, "next".into()).unwrap();
-    assert!(matches!(wait_for(&mut c, WAIT, is_terminal).last(), Some(ChatEvent::Reply { request_id: 2, .. })));
+    assert!(matches!(
+        wait_for(&mut c, WAIT, is_terminal).last(),
+        Some(ChatEvent::Reply { request_id: 2, .. })
+    ));
 }
 
 #[test]
@@ -479,8 +640,12 @@ fn unconfirmed_cancel_is_uncertain_and_bounded() {
     let start = Instant::now();
     c.cancel();
     let events = wait_for(&mut c, WAIT, is_disconnected);
-    assert!(start.elapsed() < Duration::from_millis(1500), "{:?}", start.elapsed());
-    assert_eq!(failed(&events).3, true);
+    assert!(
+        start.elapsed() < Duration::from_millis(1500),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(failed(&events).3);
 }
 
 #[test]
@@ -504,7 +669,10 @@ fn idle_peer_disconnect_is_detected() {
     connect_ready(&h, &mut c, 1);
     h.drop_connection(0);
     let events = wait_for(&mut c, WAIT, is_disconnected);
-    assert!(!events.iter().any(|e| matches!(e, ChatEvent::Failed { .. })), "{events:#?}");
+    assert!(
+        !events.iter().any(|e| matches!(e, ChatEvent::Failed { .. })),
+        "{events:#?}"
+    );
     assert!(c.send(1, 1, "q".into()).is_err());
 }
 
@@ -523,22 +691,43 @@ fn user_disconnect_mid_turn_is_immediate_uncertain_and_drops_late_reply() {
     assert!(start.elapsed() < Duration::from_millis(50));
     let first = c.try_recv();
     let second = c.try_recv();
-    assert!(matches!(first, Some(ChatEvent::Failed { request_id: Some(1), uncertain: true, .. })), "{first:?}");
-    assert!(matches!(second, Some(ChatEvent::Disconnected { .. })), "{second:?}");
+    assert!(
+        matches!(
+            first,
+            Some(ChatEvent::Failed {
+                request_id: Some(1),
+                uncertain: true,
+                ..
+            })
+        ),
+        "{first:?}"
+    );
+    assert!(
+        matches!(second, Some(ChatEvent::Disconnected { .. })),
+        "{second:?}"
+    );
     assert!(drain(&mut c, Duration::from_millis(600)).is_empty());
     c.disconnect();
-    assert!(c.try_recv().is_none(), "disconnect when disconnected is a no-op");
+    assert!(
+        c.try_recv().is_none(),
+        "disconnect when disconnected is a no-op"
+    );
 }
 
 // --- isolation / generations ---
 
 #[test]
 fn each_conversation_gets_its_own_isolated_session_and_connection() {
-    let h = Harness::new(script_turn(|s, content| reply_steps(s, &format!("{s}:{content}"))));
+    let h = Harness::new(script_turn(|s, content| {
+        reply_steps(s, &format!("{s}:{content}"))
+    }));
     let mut c = h.controller();
     connect_ready(&h, &mut c, 1);
     c.send(1, 1, "a".into()).unwrap();
-    assert_eq!(replies(&wait_for(&mut c, WAIT, is_terminal)), vec![(1, 1, "sess-0:a".to_string())]);
+    assert_eq!(
+        replies(&wait_for(&mut c, WAIT, is_terminal)),
+        vec![(1, 1, "sess-0:a".to_string())]
+    );
 
     c.new_session(2).unwrap();
     let events = wait_for(&mut c, WAIT, is_ready);
@@ -546,16 +735,32 @@ fn each_conversation_gets_its_own_isolated_session_and_connection() {
         matches!(events.last(), Some(ChatEvent::Ready { conversation_id: 2, session_id, .. }) if session_id == "sess-1"),
         "{events:#?}"
     );
-    assert!(c.send(1, 2, "old".into()).is_err(), "old conversation is not bound to the new session");
+    assert!(
+        c.send(1, 2, "old".into()).is_err(),
+        "old conversation is not bound to the new session"
+    );
     c.send(2, 3, "b".into()).unwrap();
-    assert_eq!(replies(&wait_for(&mut c, WAIT, is_terminal)), vec![(2, 3, "sess-1:b".to_string())]);
+    assert_eq!(
+        replies(&wait_for(&mut c, WAIT, is_terminal)),
+        vec![(2, 3, "sess-1:b".to_string())]
+    );
 
     assert_eq!(h.endpoints().len(), 2);
     for conn in 0..2 {
         let reqs = h.requests_on(conn);
-        assert!(!reqs.iter().any(|r| matches!(r, ApiRequest::AttachSession { .. })));
-        let configure = reqs.iter().position(|r| matches!(r, ApiRequest::ConfigureTools { .. })).unwrap();
-        if let Some(send) = reqs.iter().position(|r| matches!(r, ApiRequest::SendMessage { .. })) {
+        assert!(
+            !reqs
+                .iter()
+                .any(|r| matches!(r, ApiRequest::AttachSession { .. }))
+        );
+        let configure = reqs
+            .iter()
+            .position(|r| matches!(r, ApiRequest::ConfigureTools { .. }))
+            .unwrap();
+        if let Some(send) = reqs
+            .iter()
+            .position(|r| matches!(r, ApiRequest::SendMessage { .. }))
+        {
             assert!(configure < send);
         }
     }
@@ -572,7 +777,9 @@ fn stale_generation_events_are_ignored() {
     let ready: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            ChatEvent::Ready { conversation_id, .. } => Some(*conversation_id),
+            ChatEvent::Ready {
+                conversation_id, ..
+            } => Some(*conversation_id),
             _ => None,
         })
         .collect();
@@ -599,8 +806,14 @@ fn only_chat_protocol_requests_ever_leave_the_controller() {
         "permission_response",
     ];
     for r in h.requests() {
-        let name = serde_json::to_value(&r).unwrap()["req"].as_str().unwrap().to_string();
-        assert!(allowed.contains(&name.as_str()), "unexpected outbound request {name}");
+        let name = serde_json::to_value(&r).unwrap()["req"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            allowed.contains(&name.as_str()),
+            "unexpected outbound request {name}"
+        );
     }
 }
 
@@ -608,7 +821,14 @@ fn only_chat_protocol_requests_ever_leave_the_controller() {
 // The first three are the independent reviewer probes (review-r1-probes.rs), same logic.
 
 fn probe_terminal(e: &ChatEvent) -> bool {
-    matches!(e, ChatEvent::Reply { .. } | ChatEvent::Failed { request_id: Some(_), .. })
+    matches!(
+        e,
+        ChatEvent::Reply { .. }
+            | ChatEvent::Failed {
+                request_id: Some(_),
+                ..
+            }
+    )
 }
 
 #[test]
@@ -632,7 +852,9 @@ fn delayed_old_frames_must_not_become_next_reply() {
     c.send(1, 2, "second".into()).unwrap();
     let e = wait_for(&mut c, Duration::from_secs(3), probe_terminal);
     assert!(
-        e.iter().any(|e| matches!(e, ChatEvent::Reply { request_id: 2, text, .. } if text == "second answer")),
+        e.iter().any(
+            |e| matches!(e, ChatEvent::Reply { request_id: 2, text, .. } if text == "second answer")
+        ),
         "old turn became next response: {e:?}"
     );
 }
@@ -649,7 +871,10 @@ fn actual_bridge_error_tail_must_not_end_next_turn() {
                     message: "failed".into(),
                     provider_stop_reason: None,
                 }),
-                ev(ApiEvent::Error { code: ErrorCode::Internal, message: "failed".into() }),
+                ev(ApiEvent::Error {
+                    code: ErrorCode::Internal,
+                    message: "failed".into(),
+                }),
                 Step::Sleep(Duration::from_millis(350)),
                 done(s, Some("old")),
                 turn_done(s),
@@ -664,11 +889,16 @@ fn actual_bridge_error_tail_must_not_end_next_turn() {
     connect_ready(&h, &mut c, 1);
     c.send(1, 1, "first".into()).unwrap();
     let first = wait_for(&mut c, Duration::from_secs(3), probe_terminal);
-    assert!(!failed(&first).3, "a reported turn failure is definite: {first:?}");
+    assert!(
+        !failed(&first).3,
+        "a reported turn failure is definite: {first:?}"
+    );
     c.send(1, 2, "second".into()).unwrap();
     let e = wait_for(&mut c, Duration::from_secs(3), probe_terminal);
     assert!(
-        e.iter().any(|e| matches!(e, ChatEvent::Reply { request_id: 2, text, .. } if text == "second answer")),
+        e.iter().any(
+            |e| matches!(e, ChatEvent::Reply { request_id: 2, text, .. } if text == "second answer")
+        ),
         "failed turn tail misattributed: {e:?}"
     );
 }
@@ -686,7 +916,8 @@ fn immediate_cancel_must_not_be_lost() {
     c.cancel();
     let mut e = wait_for(&mut c, Duration::from_secs(3), probe_terminal);
     assert!(
-        e.iter().any(|e| matches!(e, ChatEvent::Failed { message, .. } if message.contains("cancel"))),
+        e.iter()
+            .any(|e| matches!(e, ChatEvent::Failed { message, .. } if message.contains("cancel"))),
         "cancel lost: {e:?}"
     );
     e.extend(drain(&mut c, Duration::from_millis(1000)));
@@ -716,7 +947,11 @@ fn each_cancel_binds_to_its_own_request_and_is_never_cleared() {
     c.send(1, 3, "plain".into()).unwrap();
     let mut e = wait_for(&mut c, Duration::from_secs(3), probe_terminal);
     e.extend(drain(&mut c, Duration::from_millis(1000)));
-    assert_eq!(replies(&e), vec![(1, 3, "answer to plain".to_string())], "an old cancel leaked: {e:?}");
+    assert_eq!(
+        replies(&e),
+        vec![(1, 3, "answer to plain".to_string())],
+        "an old cancel leaked: {e:?}"
+    );
     assert!(!e.iter().any(is_disconnected), "{e:?}");
 }
 
@@ -728,7 +963,10 @@ fn bare_error_while_cancelling_is_not_a_cancel_confirmation() {
             vec![
                 delta(s, Some("m1"), "part"),
                 Step::Sleep(Duration::from_millis(300)),
-                ev(ApiEvent::Error { code: ErrorCode::Internal, message: "unrelated".into() }),
+                ev(ApiEvent::Error {
+                    code: ErrorCode::Internal,
+                    message: "unrelated".into(),
+                }),
             ]
         }),
         ..Script::default()
@@ -740,7 +978,11 @@ fn bare_error_while_cancelling_is_not_a_cancel_confirmation() {
     c.cancel();
     let e = wait_for(&mut c, WAIT, probe_terminal);
     let (_, req, _, uncertain) = failed(&e);
-    assert_eq!((req, uncertain), (Some(1), true), "an unattributable error must not confirm the cancel: {e:?}");
+    assert_eq!(
+        (req, uncertain),
+        (Some(1), true),
+        "an unattributable error must not confirm the cancel: {e:?}"
+    );
     wait_for(&mut c, WAIT, is_disconnected);
     assert!(c.send(1, 2, "q".into()).is_err());
 }
@@ -763,7 +1005,10 @@ fn reported_stop_then_error_while_cancelling_confirms_the_cancel() {
                     message: "interrupted".into(),
                     provider_stop_reason: None,
                 }),
-                ev(ApiEvent::Error { code: ErrorCode::Internal, message: "interrupted".into() }),
+                ev(ApiEvent::Error {
+                    code: ErrorCode::Internal,
+                    message: "interrupted".into(),
+                }),
             ]
         }),
         ..Script::default()
@@ -776,7 +1021,10 @@ fn reported_stop_then_error_while_cancelling_confirms_the_cancel() {
     let e = wait_for(&mut c, WAIT, probe_terminal);
     assert!(!failed(&e).3, "{e:?}");
     c.send(1, 2, "next".into()).unwrap();
-    assert_eq!(replies(&wait_for(&mut c, WAIT, probe_terminal)), vec![(1, 2, "after cancel".to_string())]);
+    assert_eq!(
+        replies(&wait_for(&mut c, WAIT, probe_terminal)),
+        vec![(1, 2, "after cancel".to_string())]
+    );
 }
 
 #[test]
@@ -784,7 +1032,11 @@ fn tool_or_permission_attempt_while_cancelling_fails_closed() {
     let tool: TurnScript = Arc::new(|s, _| {
         vec![
             Step::Sleep(Duration::from_millis(300)),
-            ev(ApiEvent::ToolStart { session_id: s.into(), call_id: "c1".into(), name: "bash".into() }),
+            ev(ApiEvent::ToolStart {
+                session_id: s.into(),
+                call_id: "c1".into(),
+                name: "bash".into(),
+            }),
             turn_done(s),
         ]
     });
@@ -801,7 +1053,11 @@ fn tool_or_permission_attempt_while_cancelling_fails_closed() {
         ]
     });
     for (turn, needle) in [(tool, "bash"), (permission, "write")] {
-        let h = Harness::new(Script { cancel_ack_only: true, turn, ..Script::default() });
+        let h = Harness::new(Script {
+            cancel_ack_only: true,
+            turn,
+            ..Script::default()
+        });
         let mut c = h.controller();
         connect_ready(&h, &mut c, 1);
         c.send(1, 1, "q".into()).unwrap();
@@ -820,7 +1076,10 @@ fn tool_or_permission_attempt_while_cancelling_fails_closed() {
                 _ => None,
             })
             .collect();
-        assert!(decisions.iter().all(|d| *d == PermissionDecision::Deny), "{decisions:?}");
+        assert!(
+            decisions.iter().all(|d| *d == PermissionDecision::Deny),
+            "{decisions:?}"
+        );
         if needle == "write" {
             assert_eq!(decisions.len(), 1, "permission must be answered (Deny)");
         }
@@ -855,7 +1114,11 @@ fn consecutive_turns_continue_the_conversation_in_fresh_isolated_sessions() {
         "{events:#?}"
     );
     assert_eq!(failed(&events).1, Some(2));
-    assert_eq!(events.iter().filter(|e| is_ready(e)).count(), 1, "no extra Ready: {events:#?}");
+    assert_eq!(
+        events.iter().filter(|e| is_ready(e)).count(),
+        1,
+        "no extra Ready: {events:#?}"
+    );
     assert!(!events.iter().any(is_disconnected), "{events:#?}");
 
     // One SendMessage per user Send, each the only prompt of its own session/connection, with the
@@ -864,31 +1127,62 @@ fn consecutive_turns_continue_the_conversation_in_fresh_isolated_sessions() {
         .requests()
         .into_iter()
         .filter_map(|r| match r {
-            ApiRequest::SendMessage { session_id, content, system_reminder, no_reply, .. } => {
+            ApiRequest::SendMessage {
+                session_id,
+                content,
+                system_reminder,
+                no_reply,
+                ..
+            } => {
                 assert!(!no_reply);
                 Some((session_id, content, system_reminder))
             }
             _ => None,
         })
         .collect();
-    let ids: Vec<_> = sent.iter().map(|(s, c, _)| (s.as_str(), c.as_str())).collect();
-    assert_eq!(ids, [("sess-0", "alpha"), ("sess-1", REJECTED), ("sess-2", "beta"), ("sess-3", "gamma")]);
+    let ids: Vec<_> = sent
+        .iter()
+        .map(|(s, c, _)| (s.as_str(), c.as_str()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("sess-0", "alpha"),
+            ("sess-1", REJECTED),
+            ("sess-2", "beta"),
+            ("sess-3", "gamma")
+        ]
+    );
     assert_eq!(sent[0].2, None, "first turn has no replay");
     for (_, _, reminder) in &sent[1..] {
-        let r = reminder.as_deref().expect("later turns replay the accepted transcript");
-        assert!(r.contains("<<<BEGIN EARLIER TURNS") && r.contains("<<<END EARLIER TURNS>>>"), "{r}");
-        assert!(r.contains("alpha") && r.contains("sess-0 says alpha"), "{r}");
+        let r = reminder
+            .as_deref()
+            .expect("later turns replay the accepted transcript");
+        assert!(
+            r.contains("<<<BEGIN EARLIER TURNS") && r.contains("<<<END EARLIER TURNS>>>"),
+            "{r}"
+        );
+        assert!(
+            r.contains("alpha") && r.contains("sess-0 says alpha"),
+            "{r}"
+        );
         assert!(!r.contains(REJECTED), "failed prompt replayed: {r}");
     }
     let last = sent[3].2.as_deref().unwrap();
-    assert!(last.contains("sess-2 says beta") && last.find("alpha") < last.find("beta"), "{last}");
-    assert!(!sent[2].2.as_deref().unwrap().contains("beta"), "the new message is not duplicated into the replay");
+    assert!(
+        last.contains("sess-2 says beta") && last.find("alpha") < last.find("beta"),
+        "{last}"
+    );
+    assert!(
+        !sent[2].2.as_deref().unwrap().contains("beta"),
+        "the new message is not duplicated into the replay"
+    );
 
     assert_eq!(h.endpoints().len(), 4);
     let mut dirs = vec![];
     for conn in 0..4 {
         let reqs = h.requests_on(conn);
-        let at = |pred: &dyn Fn(&ApiRequest) -> bool| reqs.iter().position(|r| pred(r));
+        let at = |pred: &dyn Fn(&ApiRequest) -> bool| reqs.iter().position(pred);
         let send = at(&|r| matches!(r, ApiRequest::SendMessage { .. })).unwrap();
         let configure = at(&|r| {
             matches!(r, ApiRequest::ConfigureTools { tools, .. }
@@ -897,10 +1191,23 @@ fn consecutive_turns_continue_the_conversation_in_fresh_isolated_sessions() {
         .unwrap();
         let list = at(&|r| matches!(r, ApiRequest::ListTools { .. })).unwrap();
         assert!(configure < list && list < send, "conn {conn}: {reqs:#?}");
-        assert_eq!(reqs.iter().filter(|r| matches!(r, ApiRequest::SendMessage { .. })).count(), 1);
-        assert!(!reqs.iter().any(|r| matches!(r, ApiRequest::AttachSession { .. })));
+        assert_eq!(
+            reqs.iter()
+                .filter(|r| matches!(r, ApiRequest::SendMessage { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            !reqs
+                .iter()
+                .any(|r| matches!(r, ApiRequest::AttachSession { .. }))
+        );
         for r in &reqs {
-            if let ApiRequest::CreateSession { working_dir, system_prompt } = r {
+            if let ApiRequest::CreateSession {
+                working_dir,
+                system_prompt,
+            } = r
+            {
                 assert_eq!(system_prompt.as_deref(), Some(CHAT_SYSTEM_PROMPT));
                 dirs.push(working_dir.clone().unwrap());
             }
@@ -914,10 +1221,16 @@ fn consecutive_turns_continue_the_conversation_in_fresh_isolated_sessions() {
 #[test]
 fn replay_is_bounded_to_recent_whole_turns() {
     let big = "x".repeat(20_000);
-    let h = Harness::new(script_turn(|s, q| reply_steps(s, &format!("ok {}", &q[..q.len().min(8)]))));
+    let h = Harness::new(script_turn(|s, q| {
+        reply_steps(s, &format!("ok {}", &q[..q.len().min(8)]))
+    }));
     let mut c = h.controller();
     connect_ready(&h, &mut c, 1);
-    for (req, text) in [(1, format!("one{big}")), (2, format!("two{big}")), (3, "three".to_string())] {
+    for (req, text) in [
+        (1, format!("one{big}")),
+        (2, format!("two{big}")),
+        (3, "three".to_string()),
+    ] {
         c.send(1, req, text).unwrap();
         wait_for(&mut c, WAIT, probe_terminal);
     }
@@ -925,15 +1238,24 @@ fn replay_is_bounded_to_recent_whole_turns() {
         .requests()
         .into_iter()
         .filter_map(|r| match r {
-            ApiRequest::SendMessage { system_reminder, .. } => system_reminder,
+            ApiRequest::SendMessage {
+                system_reminder, ..
+            } => system_reminder,
             _ => None,
         })
         .collect();
     assert_eq!(reminders.len(), 2, "{}", reminders.len());
     let last = reminders.last().unwrap();
     assert!(last.chars().count() <= 33_000, "{}", last.chars().count());
-    assert!(last.contains("two") && !last.contains("one"), "keeps the most recent whole turn only");
-    assert!(last.contains("1 older turn"), "omission is stated: {}", &last[..200]);
+    assert!(
+        last.contains("two") && !last.contains("one"),
+        "keeps the most recent whole turn only"
+    );
+    assert!(
+        last.contains("1 older turn"),
+        "omission is stated: {}",
+        &last[..200]
+    );
 }
 
 #[test]
@@ -942,7 +1264,10 @@ fn later_turn_route_change_or_reused_session_is_refused_before_sending() {
         model_for: Some(|conn| Some(if conn == 0 { "model-a" } else { "model-b" }.to_string())),
         ..Script::default()
     };
-    let reused = Script { session_id_for: |_| "same-session".into(), ..Script::default() };
+    let reused = Script {
+        session_id_for: |_| "same-session".into(),
+        ..Script::default()
+    };
     for (script, needle) in [(route_change, "model"), (reused, "session")] {
         let h = Harness::new(script);
         let mut c = h.controller();
@@ -952,7 +1277,11 @@ fn later_turn_route_change_or_reused_session_is_refused_before_sending() {
         c.send(1, 2, "b".into()).unwrap();
         let e = wait_for(&mut c, WAIT, is_disconnected);
         let (_, req, message, uncertain) = failed(&e);
-        assert_eq!((req, uncertain), (Some(2), false), "known: nothing was sent: {e:?}");
+        assert_eq!(
+            (req, uncertain),
+            (Some(2), false),
+            "known: nothing was sent: {e:?}"
+        );
         assert!(message.contains(needle), "{message}");
         assert_eq!(sends(&h), 1, "the refused turn sent nothing");
         if needle == "model" {

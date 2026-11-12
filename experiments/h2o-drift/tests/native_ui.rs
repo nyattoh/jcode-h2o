@@ -660,7 +660,8 @@ fn gui_session_selection_in_sidebar_switches_conversation() {
     );
     assert!(
         // was "保存されません": local memory-only scope, now with the daemon-side caveat
-        shown.contains("この画面の履歴はメモリ内のみ") && shown.contains("保存される場合があります"),
+        shown.contains("この画面の履歴はメモリ内のみ")
+            && shown.contains("保存される場合があります"),
         "local scope and daemon-side caveat stated: {shown}"
     );
     let first = h.app.chat().sessions()[0].id;
@@ -674,8 +675,14 @@ fn gui_session_selection_in_sidebar_switches_conversation() {
 fn display_path_drops_only_the_windows_verbatim_prefix() {
     use h2o_drift_prototype::native::display_path;
     use std::path::Path;
-    assert_eq!(display_path(Path::new(r"\\?\D:\work\proj")), r"D:\work\proj");
-    assert_eq!(display_path(Path::new(r"\\?\UNC\server\share\d")), r"\\server\share\d");
+    assert_eq!(
+        display_path(Path::new(r"\\?\D:\work\proj")),
+        r"D:\work\proj"
+    );
+    assert_eq!(
+        display_path(Path::new(r"\\?\UNC\server\share\d")),
+        r"\\server\share\d"
+    );
     assert_eq!(display_path(Path::new(r"D:\plain")), r"D:\plain");
     assert_eq!(display_path(Path::new("/usr/src")), "/usr/src");
 }

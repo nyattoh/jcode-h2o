@@ -25,6 +25,7 @@ pub enum Reply {
     Silent,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Step {
     Event(ApiEvent),
     Sleep(Duration),
@@ -55,9 +56,16 @@ pub struct Script {
 impl Default for Script {
     fn default() -> Self {
         Self {
-            capabilities: ["sessions", "streaming", "text_framing", "turn_stop_reasons", "runtime_info", "session_tools"]
-                .map(String::from)
-                .to_vec(),
+            capabilities: [
+                "sessions",
+                "streaming",
+                "text_framing",
+                "turn_stop_reasons",
+                "runtime_info",
+                "session_tools",
+            ]
+            .map(String::from)
+            .to_vec(),
             hello: Reply::Ok,
             configure: Reply::Ok,
             effective_tools: vec![],
@@ -77,22 +85,38 @@ pub fn ev(event: ApiEvent) -> Step {
 }
 
 pub fn delta(session: &str, id: Option<&str>, text: &str) -> Step {
-    ev(ApiEvent::TextDelta { session_id: session.into(), text: text.into(), message_id: id.map(String::from) })
+    ev(ApiEvent::TextDelta {
+        session_id: session.into(),
+        text: text.into(),
+        message_id: id.map(String::from),
+    })
 }
 pub fn done(session: &str, id: Option<&str>) -> Step {
-    ev(ApiEvent::TextDone { session_id: session.into(), message_id: id.map(String::from) })
+    ev(ApiEvent::TextDone {
+        session_id: session.into(),
+        message_id: id.map(String::from),
+    })
 }
 pub fn replace(session: &str, id: Option<&str>, text: &str) -> Step {
-    ev(ApiEvent::TextReplace { session_id: session.into(), text: text.into(), message_id: id.map(String::from) })
+    ev(ApiEvent::TextReplace {
+        session_id: session.into(),
+        text: text.into(),
+        message_id: id.map(String::from),
+    })
 }
 pub fn turn_done(session: &str) -> Step {
-    ev(ApiEvent::TurnDone { session_id: session.into(), pending_soft_interrupts: None })
+    ev(ApiEvent::TurnDone {
+        session_id: session.into(),
+        pending_soft_interrupts: None,
+    })
 }
 
 /// A framed, accepted, completed single-message reply.
 pub fn reply_steps(session: &str, text: &str) -> Vec<Step> {
     vec![
-        ev(ApiEvent::MessageAccepted { session_id: session.into() }),
+        ev(ApiEvent::MessageAccepted {
+            session_id: session.into(),
+        }),
         delta(session, Some("m1"), text),
         done(session, Some("m1")),
         turn_done(session),
@@ -126,7 +150,9 @@ impl Read for ChannelReader {
 struct ChannelWriter(Sender<Vec<u8>>);
 impl Write for ChannelWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.send(bytes.to_vec()).map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+        self.0
+            .send(bytes.to_vec())
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
         Ok(bytes.len())
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -146,9 +172,14 @@ impl Transport for LocalTransport {
             let _ = close.send(vec![]);
         }))
     }
-    fn split(self: Box<Self>) -> jcode_sdk::Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {
+    fn split(
+        self: Box<Self>,
+    ) -> jcode_sdk::Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {
         Ok((
-            Box::new(BufReader::new(ChannelReader { rx: self.rx, current: Cursor::new(vec![]) })),
+            Box::new(BufReader::new(ChannelReader {
+                rx: self.rx,
+                current: Cursor::new(vec![]),
+            })),
             Box::new(ChannelWriter(self.tx)),
         ))
     }
@@ -207,15 +238,32 @@ impl Harness {
             let peer = shared.clone();
             let out = to_client.clone();
             thread::spawn(move || serve(peer, conn, server_rx, out, closed));
-            Ok(Box::new(LocalTransport { rx: client_rx, tx: to_server, close: to_client }) as Box<dyn Transport>)
+            Ok(Box::new(LocalTransport {
+                rx: client_rx,
+                tx: to_server,
+                close: to_client,
+            }) as Box<dyn Transport>)
         })
     }
 
     pub fn requests(&self) -> Vec<ApiRequest> {
-        self.0.log.lock().unwrap().iter().map(|(_, r)| r.clone()).collect()
+        self.0
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, r)| r.clone())
+            .collect()
     }
     pub fn requests_on(&self, conn: usize) -> Vec<ApiRequest> {
-        self.0.log.lock().unwrap().iter().filter(|(c, _)| *c == conn).map(|(_, r)| r.clone()).collect()
+        self.0
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(c, _)| *c == conn)
+            .map(|(_, r)| r.clone())
+            .collect()
     }
     pub fn endpoints(&self) -> Vec<PathBuf> {
         self.0.endpoints.lock().unwrap().clone()
@@ -242,8 +290,17 @@ fn send(out: &Sender<Vec<u8>>, closed: &AtomicBool, frame: ServerFrame) {
     let _ = out.send(bytes);
 }
 
-fn serve(shared: Arc<Shared>, conn: usize, rx: Receiver<Vec<u8>>, out: Sender<Vec<u8>>, closed: Arc<AtomicBool>) {
-    let mut reader = BufReader::new(ChannelReader { rx, current: Cursor::new(vec![]) });
+fn serve(
+    shared: Arc<Shared>,
+    conn: usize,
+    rx: Receiver<Vec<u8>>,
+    out: Sender<Vec<u8>>,
+    closed: Arc<AtomicBool>,
+) {
+    let mut reader = BufReader::new(ChannelReader {
+        rx,
+        current: Cursor::new(vec![]),
+    });
     let cancelled = Arc::new(AtomicBool::new(false));
     while let Ok(frame) = read_frame::<_, ClientFrame>(&mut reader) {
         let ClientFrame { id, request, .. } = frame;
@@ -251,7 +308,10 @@ fn serve(shared: Arc<Shared>, conn: usize, rx: Receiver<Vec<u8>>, out: Sender<Ve
         let s = &shared.script;
         let sid = (s.session_id_for)(conn);
         let reply = |event| send(&out, &closed, ServerFrame::reply(id, event));
-        let error = |message: &str| ApiEvent::Error { code: ErrorCode::InvalidRequest, message: message.into() };
+        let error = |message: &str| ApiEvent::Error {
+            code: ErrorCode::InvalidRequest,
+            message: message.into(),
+        };
         match request {
             ApiRequest::Hello { .. } => match s.hello {
                 Reply::Ok => reply(ApiEvent::HelloOk {
@@ -263,8 +323,10 @@ fn serve(shared: Arc<Shared>, conn: usize, rx: Receiver<Vec<u8>>, out: Sender<Ve
                 Reply::Silent => {}
             },
             ApiRequest::CreateSession { .. } => {
-                let session: SessionInfo =
-                    serde_json::from_value(serde_json::json!({"session_id": sid, "status": "idle"})).unwrap();
+                let session: SessionInfo = serde_json::from_value(
+                    serde_json::json!({"session_id": sid, "status": "idle"}),
+                )
+                .unwrap();
                 reply(ApiEvent::Attached { session });
             }
             ApiRequest::ConfigureTools { .. } => match s.configure {
@@ -294,10 +356,19 @@ fn serve(shared: Arc<Shared>, conn: usize, rx: Receiver<Vec<u8>>, out: Sender<Ve
                 account_label: None,
                 routes: vec![],
             }),
-            ApiRequest::SendMessage { session_id, content, .. } => {
+            ApiRequest::SendMessage {
+                session_id,
+                content,
+                ..
+            } => {
                 cancelled.store(false, Ordering::SeqCst);
                 let steps = (s.turn)(&session_id, &content);
-                let (peer, out, closed, cancelled) = (shared.clone(), out.clone(), closed.clone(), cancelled.clone());
+                let (peer, out, closed, cancelled) = (
+                    shared.clone(),
+                    out.clone(),
+                    closed.clone(),
+                    cancelled.clone(),
+                );
                 thread::spawn(move || {
                     for step in steps {
                         if cancelled.load(Ordering::SeqCst) {
@@ -317,13 +388,24 @@ fn serve(shared: Arc<Shared>, conn: usize, rx: Receiver<Vec<u8>>, out: Sender<Ve
                 } else if s.cancel_ends_turn {
                     cancelled.store(true, Ordering::SeqCst);
                     reply(ApiEvent::Ok);
-                    send(&out, &closed, ServerFrame::event(ApiEvent::TurnStopped {
-                        session_id: session_id.clone(),
-                        reason: jcode_sdk::TurnStopReason::Interrupted,
-                        message: "cancelled by client".into(),
-                        provider_stop_reason: None,
-                    }));
-                    send(&out, &closed, ServerFrame::event(ApiEvent::TurnDone { session_id, pending_soft_interrupts: None }));
+                    send(
+                        &out,
+                        &closed,
+                        ServerFrame::event(ApiEvent::TurnStopped {
+                            session_id: session_id.clone(),
+                            reason: jcode_sdk::TurnStopReason::Interrupted,
+                            message: "cancelled by client".into(),
+                            provider_stop_reason: None,
+                        }),
+                    );
+                    send(
+                        &out,
+                        &closed,
+                        ServerFrame::event(ApiEvent::TurnDone {
+                            session_id,
+                            pending_soft_interrupts: None,
+                        }),
+                    );
                 }
             }
             ApiRequest::PermissionResponse { .. } => reply(ApiEvent::Ok),
@@ -335,7 +417,11 @@ fn serve(shared: Arc<Shared>, conn: usize, rx: Receiver<Vec<u8>>, out: Sender<Ve
 // --- polling helpers ---
 
 /// Poll `try_recv` until `pred` matches an event (inclusive) or `timeout`.
-pub fn wait_for(ctrl: &mut ChatController, timeout: Duration, pred: impl Fn(&ChatEvent) -> bool) -> Vec<ChatEvent> {
+pub fn wait_for(
+    ctrl: &mut ChatController,
+    timeout: Duration,
+    pred: impl Fn(&ChatEvent) -> bool,
+) -> Vec<ChatEvent> {
     let deadline = Instant::now() + timeout;
     let mut seen = vec![];
     while Instant::now() < deadline {
@@ -377,7 +463,11 @@ pub fn is_disconnected(e: &ChatEvent) -> bool {
 }
 
 /// Connect and wait for Ready; returns the events seen.
-pub fn connect_ready(harness: &Harness, ctrl: &mut ChatController, conversation_id: u64) -> Vec<ChatEvent> {
+pub fn connect_ready(
+    harness: &Harness,
+    ctrl: &mut ChatController,
+    conversation_id: u64,
+) -> Vec<ChatEvent> {
     ctrl.connect(harness.config(), conversation_id).unwrap();
     wait_for(ctrl, Duration::from_secs(5), is_ready)
 }

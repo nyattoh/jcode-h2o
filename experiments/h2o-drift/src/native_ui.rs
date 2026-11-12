@@ -8,12 +8,14 @@ use crate::native::{
     BranchRow, Bridge, Chat, ImeGuard, KeyInput, Kind, Layout, Link, Monitor, ReceiptState, Role,
     Session, Tri, display_path, layout_for, one_line, prose,
 };
+use crate::work_target::{
+    Permission, WorkSessionPlan, WorkTarget, WorkTargetError, WorkTargetState,
+};
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame, Key,
     KeyboardShortcut, Label, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, TextStyle,
     Theme,
 };
-use crate::work_target::{Permission, WorkSessionPlan, WorkTarget, WorkTargetError, WorkTargetState};
 use std::{path::Path, sync::Arc};
 
 // ---- font ------------------------------------------------------------------------------------
@@ -219,13 +221,16 @@ impl Prov {
 /// The validated work-target state as one status line.
 fn work_target_status(t: &WorkTarget) -> String {
     match (t.confirmed_dir(), t.permission()) {
-        (Some(dir), Some(p)) => format!("作業対象: 確定済み: {} · {}", display_path(dir), p.label()),
+        (Some(dir), Some(p)) => {
+            format!("作業対象: 確定済み: {} · {}", display_path(dir), p.label())
+        }
         _ => format!("作業対象: {}", t.state().label()),
     }
 }
 
 /// The chat's own restriction, which a confirmed work target does not lift.
-const CHAT_RESTRICTION: &str = "チャット: ツール無効・自動承認なし（作業対象を確定しても編集・実行しません）";
+const CHAT_RESTRICTION: &str =
+    "チャット: ツール無効・自動承認なし（作業対象を確定しても編集・実行しません）";
 
 /// One compact status row: provenance chip + a single truncated line.
 fn row(ui: &mut egui::Ui, prov: Prov, text: &str) {
@@ -1164,7 +1169,10 @@ impl NativeApp {
             self.work_plan = None;
         }
         if let Some(e) = self.work_error {
-            line(ui, RichText::new(format!("作業先エラー: {e}")).color(p.error));
+            line(
+                ui,
+                RichText::new(format!("作業先エラー: {e}")).color(p.error),
+            );
         }
     }
 

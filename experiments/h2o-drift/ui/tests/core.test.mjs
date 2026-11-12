@@ -1,0 +1,11 @@
+import { test } from 'node:test';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import assert from 'node:assert/strict';
+const C = require('../core.js');
+test('demo/unconnected target and write authority defaults',()=>{const s=C.createInitialState();assert.equal(s.mode,'demo');assert.equal(s.connected,false);assert.equal(s.target,'未確認（書き込み不可）');assert.equal(s.writeAuthority,false)});
+test('sessions select and append in memory',()=>{const s=C.createStore({storage:null});const a=s.addUser('こんにちは');assert.equal(s.get(a.id).messages[0].text,'こんにちは');assert.equal(s.list().length,1);assert.equal(s.select(a.id),true)});
+test('demo reply deterministic and labelled',()=>{assert.equal(C.demoReply('x'),C.demoReply('x'));assert.match(C.demoReply('x'),/デモ応答（実モデルではありません）/)});
+test('keyboard send decision respects shift and IME',()=>{assert.equal(C.shouldSend({key:'Enter',shiftKey:false,isComposing:false}),true);assert.equal(C.shouldSend({key:'Enter',shiftKey:true,isComposing:false}),false);assert.equal(C.shouldSend({key:'Enter',isComposing:true}),false)});
+test('snapshot validates bounds, preserves unknowns and excludes private text',()=>{const goal={purpose:'<img onerror=x>',constraints:[],success_conditions:[],owned_paths:[],unfinished:[]};const raw={schema:'h2o-snapshot/1',branches:[{spec:{run_id:'r',branch_id:'b',owner_session_id:'o',session_id:'s',goal,context_ids:[],max_corrections:1},checkpoints:[{sequence:1,input:{goal,observation:{call_id:'c',tool:'t',output:'secret',error:'private'},context:[{id:'x',bytes:[1,2]}]},assessment:{signal:'Unknown',reason:'r'},decision:'Hold',action:'Hold'}],receipts:[{sequence:1,receipt:null}],needs_reconciliation:null}]};const vm=C.normalizeSnapshot(JSON.stringify(raw));assert.equal(vm.branches[0].receipts[0].state,'unknown');assert.equal(vm.branches[0].needsReconciliation,'unknown');assert.equal(/secret|private/.test(JSON.stringify(vm)),false);assert.equal(vm.branches[0].purpose,'<img onerror=x>');assert.throws(()=>C.normalizeSnapshot(JSON.stringify({...raw,extra:1})),/スナップショット/);assert.throws(()=>C.normalizeSnapshot('x'.repeat(1048577)),/スナップショット/);assert.throws(()=>C.normalizeSnapshot(raw),/スナップショット/,'objects are not imported: only text/bytes whose size can be measured')});
+
