@@ -334,8 +334,13 @@ fn one_line_flattens_controls_and_bidi_and_truncates_by_chars() {
 
 #[test]
 fn snapshot_view_preserves_unknowns_and_drops_private_payloads() {
-    let view = snapshot_view(&bytes(&sample("目的", "run-1")), "貼り付け").expect("valid sample");
+    let mut doc = sample("目的", "run-1");
+    // A Replan message embeds the serialized observation; the view must not keep it.
+    doc["branches"][0]["checkpoints"][2]["action"] =
+        json!({"Replan": {"message": "PRIVATE-REPLAN-PAYLOAD"}});
+    let view = snapshot_view(&bytes(&doc), "貼り付け").expect("valid sample");
     assert_eq!(view.source, "貼り付け");
+    assert_eq!(view.branches[0].checkpoints[2].action, "再計画");
     assert_eq!(view.captured_at.as_deref(), Some("2026-11-12T00:00:00Z"));
     let b = &view.branches[0];
     assert_eq!(b.run_id, "run-1");

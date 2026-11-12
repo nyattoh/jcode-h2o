@@ -299,7 +299,8 @@ impl ChatController {
         thread::spawn(move || job.run());
         self.worker = Some(Worker { flags, commands });
         self.phase = Phase::Connecting { conversation_id };
-        self.deadline = Instant::now().checked_add(config.request_timeout * 4);
+        // Setup issues up to five sequential requests (handshake .. runtime_info).
+        self.deadline = Instant::now().checked_add(config.request_timeout * 6 + GRACE);
         self.local.push_back(ChatEvent::Connecting);
     }
 

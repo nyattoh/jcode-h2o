@@ -693,7 +693,8 @@ fn decision_label(d: &Decision) -> &'static str {
 fn action_label(a: &Action) -> String {
     match a {
         Action::Continue => "継続".into(),
-        Action::Replan { message } => format!("再計画: {message}"),
+        // The message embeds the serialized observation, which this view must not keep.
+        Action::Replan { .. } => "再計画".into(),
         Action::Hold => "保留".into(),
         Action::StopBranch => "停止".into(),
     }
