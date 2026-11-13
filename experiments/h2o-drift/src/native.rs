@@ -486,7 +486,7 @@ pub fn demo_reply(input: &str) -> Message {
         text: format!(
             "【デモ応答・未接続】「{}」を受け取りました（{chars}文字・{lines}行）。\n\
              実際のモデル・Jev・daemonには送信していません。この応答は入力から決まる固定のデモです。\n\
-             作業対象が未確認のため、ファイルの編集や実行は行いません。",
+             このチャットではファイルの編集や実行は行いません（作業対象を確定しても同じです）。",
             one_line(input.trim(), 40)
         ),
     }
@@ -581,6 +581,16 @@ pub fn one_line(s: &str, max: usize) -> String {
         out.push('…');
     }
     out
+}
+
+/// Display only: Windows `fs::canonicalize` returns verbatim paths (`\\?\D:\…`,
+/// `\\?\UNC\server\share`); the stored canonical value is never rewritten.
+pub fn display_path(p: &Path) -> String {
+    let s = p.display().to_string();
+    match s.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => format!(r"\\{rest}"),
+        None => s.strip_prefix(r"\\?\").unwrap_or(&s).to_owned(),
+    }
 }
 
 /// Literal prose for wrapping labels: keeps newlines, neutralises other controls and bidi.

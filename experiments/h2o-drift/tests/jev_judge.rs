@@ -268,10 +268,18 @@ fn unexpected_shapes_are_malformed() {
 fn probabilities_need_every_label_exactly_once() {
     let q = QUESTION_ID;
     let bodies = [
-        format!(r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9}}}}}}}}"#),
-        format!(r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9,"misaligned":0.1}}}}}}}}"#),
-        format!(r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9,"misaligned":0.05,"insufficient_evidence":0.05,"aligned":0.1}}}}}}}}"#),
-        format!(r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9,"misaligned":-0.1,"insufficient_evidence":0.05}}}}}}}}"#),
+        format!(
+            r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9}}}}}}}}"#
+        ),
+        format!(
+            r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9,"misaligned":0.1}}}}}}}}"#
+        ),
+        format!(
+            r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9,"misaligned":0.05,"insufficient_evidence":0.05,"aligned":0.1}}}}}}}}"#
+        ),
+        format!(
+            r#"{{"answers":{{"{q}":{{"type":"choice","choice":"aligned","probabilities":{{"aligned":0.9,"misaligned":-0.1,"insufficient_evidence":0.05}}}}}}}}"#
+        ),
     ];
     for body in bodies {
         let (base, _rx) = serve(Reply::Respond(200, body.clone().into_bytes()));
@@ -315,7 +323,14 @@ fn observed_live_response_is_judged() {
     let (base, _rx) = serve(Reply::Respond(200, LIVE_RESPONSE.as_bytes().to_vec()));
     let got = judge(&base, &fake_key()).assess(&input("ok")).unwrap();
     assert_eq!(got.signal, Signal::Aligned);
-    for part in ["aligned", "p=0.750", "model=jev-1.14.0", "confidence=0.620", "input_tokens=573", "output_tokens=47"] {
+    for part in [
+        "aligned",
+        "p=0.750",
+        "model=jev-1.14.0",
+        "confidence=0.620",
+        "input_tokens=573",
+        "output_tokens=47",
+    ] {
         assert!(got.reason.contains(part), "{} lacks {part}", got.reason);
     }
 }

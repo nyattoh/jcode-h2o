@@ -96,7 +96,7 @@ fn concurrent_publication_soak() {
     let mut last_report = Instant::now();
     while start.elapsed() < duration {
         let seed = 0x9e37_79b9u64.wrapping_mul(cases + 1);
-        let root = if cases % 2 == 0 {
+        let root = if cases.is_multiple_of(2) {
             TestDir::new()
         } else {
             TestDir::new_in(&workspace_parent)

@@ -6,7 +6,10 @@
 use crate::chat_transport::{ChatController, ConnectConfig};
 use crate::native::{
     BranchRow, Bridge, Chat, ImeGuard, KeyInput, Kind, Layout, Link, Monitor, ReceiptState, Role,
-    Session, Tri, layout_for, one_line, prose,
+    Session, Tri, display_path, layout_for, one_line, prose,
+};
+use crate::work_target::{
+    Permission, WorkSessionPlan, WorkTarget, WorkTargetError, WorkTargetState,
 };
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame, Key,
@@ -199,6 +202,8 @@ enum Prov {
     Demo,
     Unknown,
     Imported,
+    /// What would be done; nothing is running.
+    Plan,
 }
 
 impl Prov {
@@ -208,9 +213,24 @@ impl Prov {
             Prov::Demo => ("デモ", p.warn),
             Prov::Unknown => ("不明", p.muted),
             Prov::Imported => ("取込", p.accent),
+            Prov::Plan => ("計画", p.muted),
         }
     }
 }
+
+/// The validated work-target state as one status line.
+fn work_target_status(t: &WorkTarget) -> String {
+    match (t.confirmed_dir(), t.permission()) {
+        (Some(dir), Some(p)) => {
+            format!("作業対象: 確定済み: {} · {}", display_path(dir), p.label())
+        }
+        _ => format!("作業対象: {}", t.state().label()),
+    }
+}
+
+/// The chat's own restriction, which a confirmed work target does not lift.
+const CHAT_RESTRICTION: &str =
+    "チャット: ツール無効・自動承認なし（作業対象を確定しても編集・実行しません）";
 
 /// One compact status row: provenance chip + a single truncated line.
 fn row(ui: &mut egui::Ui, prov: Prov, text: &str) {
@@ -284,6 +304,11 @@ pub struct NativeApp {
     path_input: String,
     paste_input: String,
     notice: Option<String>,
+    work_input: String,
+    work_target: WorkTarget,
+    work_error: Option<WorkTargetError>,
+    /// Produced on 確定; a data value only, no work session is started from it.
+    work_plan: Option<WorkSessionPlan>,
 }
 
 impl eframe::App for NativeApp {
@@ -316,6 +341,10 @@ impl NativeApp {
             path_input: String::new(),
             paste_input: String::new(),
             notice: None,
+            work_input: String::new(),
+            work_target: WorkTarget::default(),
+            work_error: None,
+            work_plan: None,
         }
     }
 
@@ -333,6 +362,9 @@ impl NativeApp {
     }
     pub fn layout(&self) -> Layout {
         self.layout
+    }
+    pub fn work_target(&self) -> &WorkTarget {
+        &self.work_target
     }
     pub fn monitor_mut(&mut self) -> &mut Monitor {
         &mut self.monitor
@@ -572,15 +604,17 @@ impl NativeApp {
             .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                // the restriction comes before the target so truncation never hides it
+                let status = work_target_status(&self.work_target);
                 let (first, second) = if self.kind() == Kind::Demo {
                     (
                         "デモ・未接続 — モデル/Jev/daemonには接続しません。応答は固定のデモです。",
-                        "作業対象: 未確認 · 書き込み権限なし（チャットから編集・実行しません）",
+                        format!("チャットは編集・実行しません · {status}"),
                     )
                 } else {
                     (
                         "実会話 — 既存のjcodeに明示的に接続します（自動起動しません・ログインや鍵の読み取りもしません）",
-                        "ツール無効化を確認してから送信 · 作業対象なし（編集・実行しません）· H₂O/Jev/Swarm/メモリは不明のまま",
+                        format!("ツール無効化を確認してから送信 · チャットは編集・実行しません · {status} · H₂O/Jev/Swarm/メモリは不明のまま"),
                     )
                 };
                 line(ui, RichText::new(first).color(p.warn));
@@ -835,7 +869,8 @@ impl NativeApp {
         // possible), so a long error/notice/route never pushes the composer away and the notice
         // stays readable by scrolling
         let left = room - ui.min_rect().height();
-        let max = (left * 0.5).min(left - 60.0).max(36.0);
+        let extra = if left > 500.0 { 24.0 } else { 0.0 };
+        let max = (left * 0.5 + extra).min(left - 60.0).max(36.0);
         ScrollArea::vertical()
             .id_salt("connection-details")
             .max_height(max)
@@ -877,13 +912,13 @@ impl NativeApp {
                     m.as_deref().unwrap_or("未報告")
                 ),
             };
-            line(ui, RichText::new(route).small().color(p.muted));
             let verified = if s.verified {
                 "実応答: 受信済み（このチャット）"
             } else {
                 "初回の実応答: 未確認（送信して返答が届くまで分かりません）"
             };
             line(ui, RichText::new(verified).small().color(p.muted));
+            line(ui, RichText::new(route).small().color(p.muted));
         }
     }
 
@@ -1022,7 +1057,15 @@ impl NativeApp {
                 Bridge::Disconnected { .. } => "未接続",
             };
             row(ui, Prov::Fact, &format!("チャット接続: {link}"));
-            row(ui, Prov::Fact, "作業対象: なし · 書き込み権限なし（ツール無効）");
+            row(ui, Prov::Fact, &work_target_status(&self.work_target));
+            if let Some(plan) = &self.work_plan {
+                let dir = display_path(&plan.working_dir);
+                let perm = plan.permission.label();
+                row(ui, Prov::Plan, &format!("計画（未実行）: {perm}の作業セッション · {dir}"));
+            }
+            row(ui, Prov::Fact, CHAT_RESTRICTION);
+            self.work_target_ui(ui);
+            ui.add_space(4.0);
             row(ui, Prov::Fact, "この画面の履歴はメモリ内のみ（このアプリはファイルに保存しません）");
             row(ui, Prov::Unknown, "jcode側の保存: 不明（実会話の送信内容は保存される場合あり・閉じても削除の保証なし）");
             match &self.font {
@@ -1075,6 +1118,78 @@ impl NativeApp {
             ui.add_space(10.0);
             self.import_ui(ui);
         });
+    }
+
+    /// 作業先: explicit path + explicit permission + 確定. Confirming validates and records a plan
+    /// only; nothing is started and the chat session is not affected.
+    fn work_target_ui(&mut self, ui: &mut egui::Ui) {
+        let p = pal(ui);
+        line(ui, RichText::new("作業先").strong());
+        ui.add(
+            Label::new(
+                RichText::new("フォルダの絶対パスを入力し、権限を選んで確定します。確定は確認と計画だけで、作業セッションは開始せず、このチャットのツールも無効のままです。")
+                    .small()
+                    .color(p.muted),
+            )
+            .wrap(),
+        );
+        if ui
+            .add(
+                TextEdit::singleline(&mut self.work_input)
+                    .hint_text("作業先フォルダの絶対パス（例: D:\\work\\project）")
+                    .desired_width(ui.available_width()),
+            )
+            .changed()
+        {
+            self.work_error = None;
+        }
+        // identical values keep the confirmation, so this per-frame write-back is safe
+        self.work_target
+            .set_path(self.work_input.trim().trim_matches('"'));
+        let chosen = self.work_target.permission();
+        ui.horizontal(|ui| {
+            for perm in [Permission::ReadOnly, Permission::ReadWrite] {
+                if ui
+                    .add(egui::Button::selectable(chosen == Some(perm), perm.label()))
+                    .clicked()
+                {
+                    self.work_target.set_permission(perm);
+                    self.work_error = None;
+                }
+            }
+            let ready = chosen.is_some() && !self.work_target.path_input().trim().is_empty();
+            if ui
+                .add_enabled(ready, egui::Button::new("確定"))
+                .on_disabled_hover_text("パスを入力し、権限を選ぶと確定できます")
+                .clicked()
+            {
+                self.confirm_work_target();
+            }
+        });
+        if self.work_target.state() != WorkTargetState::Confirmed {
+            self.work_plan = None;
+        }
+        if let Some(e) = self.work_error {
+            line(
+                ui,
+                RichText::new(format!("作業先エラー: {e}")).color(p.error),
+            );
+        }
+    }
+
+    fn confirm_work_target(&mut self) {
+        self.work_plan = None;
+        let result = match self.work_target.confirm() {
+            Ok(_) => self.work_target.plan(),
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok(plan) => {
+                self.work_plan = Some(plan);
+                self.work_error = None;
+            }
+            Err(e) => self.work_error = Some(e),
+        }
     }
 
     fn import_ui(&mut self, ui: &mut egui::Ui) {

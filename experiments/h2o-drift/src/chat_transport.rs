@@ -89,9 +89,16 @@ pub type TransportFactory =
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Disconnected,
-    Connecting { conversation_id: u64 },
-    Ready { conversation_id: u64 },
-    Turn { conversation_id: u64, request_id: u64 },
+    Connecting {
+        conversation_id: u64,
+    },
+    Ready {
+        conversation_id: u64,
+    },
+    Turn {
+        conversation_id: u64,
+        request_id: u64,
+    },
 }
 
 struct Flags {
@@ -193,12 +200,19 @@ impl ChatController {
         Ok(())
     }
 
-    pub fn send(&mut self, conversation_id: u64, request_id: u64, text: String) -> Result<(), String> {
+    pub fn send(
+        &mut self,
+        conversation_id: u64,
+        request_id: u64,
+        text: String,
+    ) -> Result<(), String> {
         if text.trim().is_empty() {
             return Err("message is empty".into());
         }
         match self.phase {
-            Phase::Ready { conversation_id: bound } if bound == conversation_id => {}
+            Phase::Ready {
+                conversation_id: bound,
+            } if bound == conversation_id => {}
             Phase::Ready { .. } => {
                 return Err("this conversation has no session; start a new session for it".into());
             }
@@ -207,8 +221,16 @@ impl ChatController {
             Phase::Disconnected => return Err("not connected".into()),
         }
         self.seq += 1;
-        let command = Command { seq: self.seq, conversation_id, request_id, text };
-        let sent = self.worker.as_ref().is_some_and(|w| w.commands.send(command).is_ok());
+        let command = Command {
+            seq: self.seq,
+            conversation_id,
+            request_id,
+            text,
+        };
+        let sent = self
+            .worker
+            .as_ref()
+            .is_some_and(|w| w.commands.send(command).is_ok());
         if !sent {
             // The worker is gone, so nothing reached the harness.
             self.retire();
@@ -218,10 +240,13 @@ impl ChatController {
             return Err("not connected".into());
         }
         let config = self.config.as_ref().expect("Ready implies a config");
-        self.phase = Phase::Turn { conversation_id, request_id };
+        self.phase = Phase::Turn {
+            conversation_id,
+            request_id,
+        };
         // A later turn first sets up its own session (up to ~5 requests).
-        self.deadline = Instant::now()
-            .checked_add(config.turn_timeout + config.request_timeout * 6 + GRACE);
+        self.deadline =
+            Instant::now().checked_add(config.turn_timeout + config.request_timeout * 6 + GRACE);
         Ok(())
     }
 
@@ -239,7 +264,11 @@ impl ChatController {
         if self.phase == Phase::Disconnected {
             return;
         }
-        if let Phase::Turn { conversation_id, request_id } = self.phase {
+        if let Phase::Turn {
+            conversation_id,
+            request_id,
+        } = self.phase
+        {
             self.local.push_back(ChatEvent::Failed {
                 conversation_id: Some(conversation_id),
                 request_id: Some(request_id),
@@ -248,7 +277,9 @@ impl ChatController {
             });
         }
         self.retire();
-        self.local.push_back(ChatEvent::Disconnected { message: "disconnected".into() });
+        self.local.push_back(ChatEvent::Disconnected {
+            message: "disconnected".into(),
+        });
     }
 
     pub fn try_recv(&mut self) -> Option<ChatEvent> {
@@ -267,7 +298,9 @@ impl ChatController {
 
     fn ensure_idle(&self) -> Result<(), String> {
         match self.phase {
-            Phase::Turn { .. } => Err("a reply is still pending; cancel or disconnect first".into()),
+            Phase::Turn { .. } => {
+                Err("a reply is still pending; cancel or disconnect first".into())
+            }
             _ => Ok(()),
         }
     }
@@ -285,7 +318,10 @@ impl ChatController {
         let config = self.config.clone().expect("start requires a config");
         self.generation += 1;
         self.worker = None;
-        let flags = Arc::new(Flags { stop: AtomicBool::new(false), cancel: AtomicU64::new(0) });
+        let flags = Arc::new(Flags {
+            stop: AtomicBool::new(false),
+            cancel: AtomicU64::new(0),
+        });
         let (commands, inbox) = channel();
         let job = Job {
             factory: self.factory.clone(),
@@ -306,20 +342,37 @@ impl ChatController {
 
     fn apply(&mut self, event: ChatEvent) {
         match (&event, self.phase) {
-            (ChatEvent::Ready { conversation_id, .. }, Phase::Connecting { .. }) => {
-                self.phase = Phase::Ready { conversation_id: *conversation_id };
+            (
+                ChatEvent::Ready {
+                    conversation_id, ..
+                },
+                Phase::Connecting { .. },
+            ) => {
+                self.phase = Phase::Ready {
+                    conversation_id: *conversation_id,
+                };
                 self.deadline = None;
             }
             (
                 ChatEvent::Reply { request_id, .. }
-                | ChatEvent::Failed { request_id: Some(request_id), .. },
-                Phase::Turn { conversation_id, request_id: pending },
+                | ChatEvent::Failed {
+                    request_id: Some(request_id),
+                    ..
+                },
+                Phase::Turn {
+                    conversation_id,
+                    request_id: pending,
+                },
             ) if *request_id == pending => {
                 self.phase = Phase::Ready { conversation_id };
                 self.deadline = None;
             }
             (ChatEvent::Disconnected { .. }, phase) => {
-                if let Phase::Turn { conversation_id, request_id } = phase {
+                if let Phase::Turn {
+                    conversation_id,
+                    request_id,
+                } = phase
+                {
                     self.local.push_back(ChatEvent::Failed {
                         conversation_id: Some(conversation_id),
                         request_id: Some(request_id),
@@ -345,7 +398,10 @@ impl ChatController {
                 message: "connection setup timed out; no message was sent".into(),
                 uncertain: false,
             },
-            Phase::Turn { conversation_id, request_id } => ChatEvent::Failed {
+            Phase::Turn {
+                conversation_id,
+                request_id,
+            } => ChatEvent::Failed {
                 conversation_id: Some(conversation_id),
                 request_id: Some(request_id),
                 message: "no reply in time; the harness may have received the message".into(),
@@ -355,7 +411,9 @@ impl ChatController {
         };
         self.retire();
         self.local.push_back(failed);
-        self.local.push_back(ChatEvent::Disconnected { message: "timed out".into() });
+        self.local.push_back(ChatEvent::Disconnected {
+            message: "timed out".into(),
+        });
     }
 }
 
@@ -434,7 +492,9 @@ impl Job {
                 return;
             }
             if idle.as_ref().is_some_and(|s| s.client.is_closed()) {
-                self.emit(ChatEvent::Disconnected { message: "harness connection closed".into() });
+                self.emit(ChatEvent::Disconnected {
+                    message: "harness connection closed".into(),
+                });
                 return;
             }
             let command = match self.inbox.recv_timeout(POLL) {
@@ -442,8 +502,14 @@ impl Job {
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => return,
             };
-            let (conversation_id, request_id) = (Some(command.conversation_id), Some(command.request_id));
-            let known = |message: String| ChatEvent::Failed { conversation_id, request_id, message, uncertain: false };
+            let (conversation_id, request_id) =
+                (Some(command.conversation_id), Some(command.request_id));
+            let known = |message: String| ChatEvent::Failed {
+                conversation_id,
+                request_id,
+                message,
+                uncertain: false,
+            };
             let session = match idle.take() {
                 Some(session) => session,
                 None => match self.open(command.seq) {
@@ -468,7 +534,9 @@ impl Job {
                         self.emit(known(CANCELLED_UNSENT.into()));
                         continue;
                     }
-                    Err(message) => return self.refuse(known(format!("{message}; nothing was sent"))),
+                    Err(message) => {
+                        return self.refuse(known(format!("{message}; nothing was sent")));
+                    }
                 },
             };
             used.push(session.id.clone());
@@ -520,8 +588,12 @@ impl Job {
     fn open(&self, seq: u64) -> Result<Option<Session>, String> {
         let halted = || self.stopped() || self.cancelled(seq);
         let endpoint = &self.config.endpoint;
-        let transport = (self.factory)(endpoint)
-            .map_err(|e| format!("cannot reach a jcode harness at {}: {e}", endpoint.display()))?;
+        let transport = (self.factory)(endpoint).map_err(|e| {
+            format!(
+                "cannot reach a jcode harness at {}: {e}",
+                endpoint.display()
+            )
+        })?;
         if halted() {
             return Ok(None);
         }
@@ -537,15 +609,20 @@ impl Job {
         )
         .map_err(|e| format!("harness handshake at {} failed: {e}", endpoint.display()))?;
         if !client.supports("session_tools") {
-            return Err("this harness does not support session_tools, so tool use cannot be \
+            return Err(
+                "this harness does not support session_tools, so tool use cannot be \
                         disabled; chat refused"
-                .into());
+                    .into(),
+            );
         }
         if halted() {
             return Ok(None);
         }
         let dir = NeutralDir::create()?;
-        let working_dir = dir.0.to_str().ok_or("temporary directory path is not UTF-8")?;
+        let working_dir = dir
+            .0
+            .to_str()
+            .ok_or("temporary directory path is not UTF-8")?;
         let info = client
             .create_session_with_options(CreateSessionOptions {
                 working_dir: Some(working_dir.into()),
@@ -562,7 +639,11 @@ impl Job {
         client
             .configure_tools(
                 &id,
-                ToolConfiguration { enabled: Some(vec![]), disabled: vec![], custom: vec![] },
+                ToolConfiguration {
+                    enabled: Some(vec![]),
+                    disabled: vec![],
+                    custom: vec![],
+                },
             )
             .map_err(|e| format!("disabling tools failed, chat refused: {e}"))?;
         if halted() {
@@ -579,14 +660,22 @@ impl Job {
             ));
         }
         let route = if client.supports("runtime_info") {
-            client.get_runtime_info(&id).map(|i| (i.provider, i.model)).unwrap_or_default()
+            client
+                .get_runtime_info(&id)
+                .map(|i| (i.provider, i.model))
+                .unwrap_or_default()
         } else {
             (None, None)
         };
         if halted() {
             return Ok(None);
         }
-        Ok(Some(Session { client, id, route, _dir: dir }))
+        Ok(Some(Session {
+            client,
+            id,
+            route,
+            _dir: dir,
+        }))
     }
 
     fn turn(&self, session: &Session, seq: u64, text: &str, reminder: Option<&str>) -> Outcome {
@@ -632,10 +721,16 @@ impl Job {
                 return blocked(&what);
             }
             match event {
-                ApiEvent::TextDelta { text, message_id, .. } => frames.part(message_id).1.push_str(&text),
-                ApiEvent::TextReplace { text, message_id, .. } => frames.part(message_id).1 = text,
+                ApiEvent::TextDelta {
+                    text, message_id, ..
+                } => frames.part(message_id).1.push_str(&text),
+                ApiEvent::TextReplace {
+                    text, message_id, ..
+                } => frames.part(message_id).1 = text,
                 ApiEvent::TextDone { message_id, .. } => frames.done(&message_id),
-                ApiEvent::TurnStopped { reason, message, .. } => {
+                ApiEvent::TurnStopped {
+                    reason, message, ..
+                } => {
                     stopped = Some(format!("{reason:?}: {message}"));
                 }
                 ApiEvent::TurnDone { .. } => {
@@ -654,7 +749,9 @@ impl Job {
                 // be attributed to this turn ending, so its outcome is unknown.
                 ApiEvent::Error { code, message } => {
                     return match stopped {
-                        Some(why) => Outcome::Ended(format!("turn failed ({why}; {code:?}: {message})")),
+                        Some(why) => {
+                            Outcome::Ended(format!("turn failed ({why}; {code:?}: {message})"))
+                        }
                         None => {
                             cancel_quietly();
                             Outcome::Uncertain(format!("harness error {code:?}: {message}"))
@@ -669,7 +766,8 @@ impl Job {
     /// Cancel is confirmed only by the cancel ack followed by the end of the turn: `TurnDone`, or
     /// `TurnStopped` then `Error`. Tool/permission attempts still fail closed meanwhile.
     fn cancel_turn(&self, session: &Session, events: &jcode_sdk::EventStream) -> Outcome {
-        let unconfirmed = |why: &str| Outcome::Uncertain(format!("cancel could not be confirmed: {why}"));
+        let unconfirmed =
+            |why: &str| Outcome::Uncertain(format!("cancel could not be confirmed: {why}"));
         if let Err(e) = session.client.cancel(&session.id) {
             return unconfirmed(&e.to_string());
         }
@@ -710,7 +808,11 @@ fn violation(client: &JcodeClient, id: &str, event: &ApiEvent) -> Option<String>
         | ApiEvent::ToolCall { name, .. }
         | ApiEvent::ToolDone { name, .. } => Some(format!("tool `{name}`")),
         ApiEvent::ToolInputDelta { .. } => Some("a tool call".into()),
-        ApiEvent::PermissionRequest { request_id, tool_name, .. } => {
+        ApiEvent::PermissionRequest {
+            request_id,
+            tool_name,
+            ..
+        } => {
             let _ = client.respond_to_permission(id, request_id, PermissionDecision::Deny);
             Some(format!("a permission request for `{tool_name}`"))
         }
@@ -768,7 +870,9 @@ struct TextFrames {
 
 impl TextFrames {
     fn index(&self, id: &Option<String>) -> Option<usize> {
-        self.parts.iter().rposition(|(pid, _, done)| pid == id && (id.is_some() || !done))
+        self.parts
+            .iter()
+            .rposition(|(pid, _, done)| pid == id && (id.is_some() || !done))
     }
 
     fn part(&mut self, id: Option<String>) -> &mut (Option<String>, String, bool) {
@@ -791,7 +895,12 @@ impl TextFrames {
             .rev()
             .find(|(_, text, done)| *done && !text.is_empty())
             .map(|(_, text, _)| text.clone())
-            .unwrap_or_else(|| self.parts.iter().map(|(_, text, _)| text.as_str()).collect())
+            .unwrap_or_else(|| {
+                self.parts
+                    .iter()
+                    .map(|(_, text, _)| text.as_str())
+                    .collect()
+            })
     }
 }
 
@@ -801,7 +910,8 @@ struct NeutralDir(PathBuf);
 impl NeutralDir {
     fn create() -> Result<Self, String> {
         let base = std::env::temp_dir().join("h2o-native-chat");
-        std::fs::create_dir_all(&base).map_err(|e| format!("cannot create {}: {e}", base.display()))?;
+        std::fs::create_dir_all(&base)
+            .map_err(|e| format!("cannot create {}: {e}", base.display()))?;
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());

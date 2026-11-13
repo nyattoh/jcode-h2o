@@ -19,6 +19,7 @@ use std::{
 
 mod chat_support;
 use chat_support::*;
+mod support;
 
 // ---- headless egui harness -------------------------------------------------------------------
 
@@ -27,6 +28,8 @@ struct Text {
     text: String,
     rect: Rect,
     rows: usize,
+    /// Cut to fit by the widget (an ellipsis is painted; `text` stays the full string).
+    elided: bool,
     color: Color32,
     backdrop: Color32,
     /// The clip rectangle it was painted with (scroll areas, panels).
@@ -126,6 +129,7 @@ impl Gui {
                         text: t.galley.text().to_owned(),
                         rect,
                         rows: t.galley.rows.len(),
+                        elided: t.galley.elided,
                         color,
                         backdrop,
                         clip,
@@ -144,7 +148,10 @@ impl Gui {
     /// A real pointer click on painted text (exact match first, then containment).
     fn click(&mut self, label: &str) -> Frame {
         let f = self.frame(vec![]);
-        let at = f.text(label).rect.center();
+        self.click_at(f.text(label).rect.center())
+    }
+
+    fn click_at(&mut self, at: egui::Pos2) -> Frame {
         let button = |pressed| Event::PointerButton {
             pos: at,
             button: PointerButton::Primary,
@@ -914,12 +921,22 @@ fn storage_and_replay_disclosure_is_visible_before_a_real_prompt_on_every_surfac
     let peer = Harness::new(Script::default());
     let mut g = Gui::new(&peer, 1280.0, 900.0);
     let f = g.frame(vec![]);
-    for old in ["履歴は保存されません（メモリ内のみ）", "履歴: このウィンドウのメモリ内のみ"] {
-        assert!(!f.has(old), "misleading memory-only claim {old:?}: {}", f.joined());
+    for old in [
+        "履歴は保存されません（メモリ内のみ）",
+        "履歴: このウィンドウのメモリ内のみ",
+    ] {
+        assert!(
+            !f.has(old),
+            "misleading memory-only claim {old:?}: {}",
+            f.joined()
+        );
     }
     let side = f.text(LOCAL);
     assert!(side.rect.right() < 400.0, "sidebar scope: {side:?}");
-    assert!(side.text.contains(REMOTE), "sidebar names daemon-side persistence: {side:?}");
+    assert!(
+        side.text.contains(REMOTE),
+        "sidebar names daemon-side persistence: {side:?}"
+    );
     let mon = f.text(MONITOR_REMOTE);
     assert!(mon.rect.left() > 900.0, "monitor scope: {mon:?}");
     let notice = f
@@ -927,15 +944,38 @@ fn storage_and_replay_disclosure_is_visible_before_a_real_prompt_on_every_surfac
         .iter()
         .find(|t| t.text.contains("32,000文字") && t.rect.left() > 250.0 && t.rect.right() < 950.0)
         .unwrap_or_else(|| panic!("chat-surface notice: {}", f.joined()));
-    for needle in [REMOTE, "削除されたとは限りません", "新しい隔離セッション", "応答済み", "古い分は省略", "スナップショットは送りません"] {
-        assert!(notice.text.contains(needle), "{needle:?} in {:?}", notice.text);
+    for needle in [
+        REMOTE,
+        "削除されたとは限りません",
+        "新しい隔離セッション",
+        "応答済み",
+        "古い分は省略",
+        "スナップショットは送りません",
+    ] {
+        assert!(
+            notice.text.contains(needle),
+            "{needle:?} in {:?}",
+            notice.text
+        );
     }
     assert!(peer.requests().is_empty(), "disclosure needs no call");
 
     let ready = g.connect();
-    assert!(ready.has("接続設定済み") && ready.has("送信ごとに再確認"), "{}", ready.joined());
-    assert!(!ready.has("接続済み"), "no persistent-socket claim: {}", ready.joined());
-    assert!(ready.has("32,000文字"), "notice stays after connect: {}", ready.joined());
+    assert!(
+        ready.has("接続設定済み") && ready.has("送信ごとに再確認"),
+        "{}",
+        ready.joined()
+    );
+    assert!(
+        !ready.has("接続済み"),
+        "no persistent-socket claim: {}",
+        ready.joined()
+    );
+    assert!(
+        ready.has("32,000文字"),
+        "notice stays after connect: {}",
+        ready.joined()
+    );
     assert!(sends(&peer).is_empty());
 
     // 360 px narrow, both themes: the notice wraps (never only a tooltip), fits and is readable
@@ -949,14 +989,27 @@ fn storage_and_replay_disclosure_is_visible_before_a_real_prompt_on_every_surfac
         let n = chat.text("32,000文字");
         assert!(n.rows > 1 && n.text.contains(REMOTE), "{theme}: {n:?}");
         for t in &chat.texts {
-            assert!(t.rect.right() <= 360.5, "{theme} overflow: {:?} {:?}", t.text, t.rect);
+            assert!(
+                t.rect.right() <= 360.5,
+                "{theme} overflow: {:?} {:?}",
+                t.text,
+                t.rect
+            );
         }
         assert_readable(&chat, theme);
         let hist = g.click("履歴");
-        assert!(hist.text(LOCAL).text.contains(REMOTE), "{theme}: {}", hist.joined());
+        assert!(
+            hist.text(LOCAL).text.contains(REMOTE),
+            "{theme}: {}",
+            hist.joined()
+        );
         assert_readable(&hist, theme);
         let mon = g.click("監視");
-        assert!(mon.has(MONITOR_REMOTE) && mon.has(LOCAL), "{theme}: {}", mon.joined());
+        assert!(
+            mon.has(MONITOR_REMOTE) && mon.has(LOCAL),
+            "{theme}: {}",
+            mon.joined()
+        );
         assert_readable(&mon, theme);
     }
     assert!(peer.requests().is_empty());
@@ -986,8 +1039,17 @@ impl Frame {
     fn fits_width(&self, what: &str) {
         for t in &self.texts {
             // the single-line endpoint field scrolls its own typed text inside its clip
-            let r = if t.text.starts_with(TEST_ENDPOINT) { t.rect.intersect(t.clip) } else { t.rect };
-            assert!(r.right() <= MIN_W + 0.5, "{what} overflow: {:?} {:?}", t.text, t.rect);
+            let r = if t.text.starts_with(TEST_ENDPOINT) {
+                t.rect.intersect(t.clip)
+            } else {
+                t.rect
+            };
+            assert!(
+                r.right() <= MIN_W + 0.5,
+                "{what} overflow: {:?} {:?}",
+                t.text,
+                t.rect
+            );
         }
     }
 }
@@ -1041,7 +1103,10 @@ impl Gui {
                 let (a, b) = visible(&n);
                 if b - a > 1.0 && b > 0.0 {
                     let from = seen.unwrap_or(0.0);
-                    assert!(a <= from + 2.0, "{what}: notice rows {from}..{a} never on screen: {n:?}");
+                    assert!(
+                        a <= from + 2.0,
+                        "{what}: notice rows {from}..{a} never on screen: {n:?}"
+                    );
                     seen = Some(from.max(b));
                     tallest = tallest.max(b.min(height) - a.max(0.0));
                 }
@@ -1056,7 +1121,10 @@ impl Gui {
             "{what}: notice tail unreachable (seen {seen:?} of {height}); painted: {}",
             f.joined()
         );
-        assert!(tallest >= 28.0, "{what}: notice viewport too small to read: {tallest}");
+        assert!(
+            tallest >= 28.0,
+            "{what}: notice viewport too small to read: {tallest}"
+        );
         let n = notice(&f).expect("notice");
         assert!(n.text.contains("削除されたとは限りません") && n.text.contains("32,000文字"));
         self.wheel(at, 10_000.0).shown(action, self.size);
@@ -1124,19 +1192,28 @@ fn minimum_window_keeps_send_and_cancel_usable_and_the_notice_readable_in_both_t
             f.has("echo[sess-0]: こんにちは")
         });
         f.shown("送信", size);
-        assert_eq!(sends(&peer), [("sess-0".to_owned(), "こんにちは".to_owned())]);
+        assert_eq!(
+            sends(&peer),
+            [("sess-0".to_owned(), "こんにちは".to_owned())]
+        );
 
         // pending: キャンセル stays on screen and works by pointer
         g.click_shown(COMPOSER_HINT);
         g.type_text("待ってください");
         g.click_shown("送信");
-        let f = g.until("pending", Duration::from_secs(5), |f, _| f.has("キャンセル"));
+        let f = g.until("pending", Duration::from_secs(5), |f, _| {
+            f.has("キャンセル")
+        });
         f.fits_width(theme);
         g.click_shown("キャンセル");
         let f = g.until("cancelled", Duration::from_secs(6), |_, app| {
             app.chat().active().is_some_and(|s| !s.is_loading())
         });
-        assert_eq!(peer.count(|r| matches!(r, ApiRequest::Cancel { .. })), 1, "{theme}");
+        assert_eq!(
+            peer.count(|r| matches!(r, ApiRequest::Cancel { .. })),
+            1,
+            "{theme}"
+        );
         assert_eq!(g.app.composer(), "待ってください", "{theme}: draft back");
         f.shown("送信", size);
         f.fits_width(theme);
@@ -1162,7 +1239,9 @@ fn minimum_window_long_error_and_route_never_push_the_composer_away() {
         g.click_shown(ENDPOINT_HINT);
         g.type_text(&long_endpoint);
         g.click_shown("接続");
-        let f = g.until("failure", Duration::from_secs(5), |f, _| f.has("接続エラー"));
+        let f = g.until("failure", Duration::from_secs(5), |f, _| {
+            f.has("接続エラー")
+        });
         let err = f.text("接続エラー").clone();
         assert!(err.rows > 3, "{theme}: error is long: {err:?}");
         assert!(
@@ -1209,7 +1288,10 @@ fn minimum_window_long_error_and_route_never_push_the_composer_away() {
             f = g.wheel(at, 6.0);
         }
         let route = f.text("経路（jcodeの報告）: provider-");
-        assert!(route.clip.contains_rect(route.rect.shrink(1.0)), "{theme}: {route:?}");
+        assert!(
+            route.clip.contains_rect(route.rect.shrink(1.0)),
+            "{theme}: {route:?}"
+        );
         assert!(f.has("初回の実応答: 未確認"), "{}", f.joined());
         f.shown("送信", size);
         f.fits_width(theme);
@@ -1226,7 +1308,10 @@ fn replay_disclosure_states_the_body_only_contiguous_chronological_cap() {
     let peer = Harness::new(Script::default());
     let mut g = Gui::new(&peer, 1280.0, 900.0);
     let n = g.frame(vec![]).text(NOTICE).text.clone();
-    assert!(!n.contains("新しい順に最大32,000文字"), "imprecise order/budget: {n}");
+    assert!(
+        !n.contains("新しい順に最大32,000文字"),
+        "imprecise order/budget: {n}"
+    );
     for needle in [
         "直近から連続する",
         "往復単位",
@@ -1250,17 +1335,269 @@ fn replay_disclosure_states_the_body_only_contiguous_chronological_cap() {
 /// instead of the whole galley; reading all of it is proven by `read_whole_notice` above.
 #[test]
 fn final_minimum_height_notice_and_composer_are_visible() {
- let mut fits=true;
- for theme in ["light","dark"] {
-  let peer=Harness::new(Script::default()); let mut g=Gui::new(&peer,360.0,480.0);
-  if theme=="dark" {g.click("ダーク");}
-  let f=g.frame(vec![]);
-  let n=f.text("32,000文字"); let s=f.text("送信");
-  eprintln!("{theme}: notice={:?}, send={:?}",n.rect,s.rect);
-  fits &= n.rect.intersect(n.clip).bottom() <=480.5 && s.rect.bottom()<=480.5;
-  let f=g.connect(); let n=f.text("32,000文字"); let s=f.texts.iter().find(|t|t.text=="送信");
-  eprintln!("{theme} READY: notice={:?}, exact send={:?}",n.rect,s.map(|s|s.rect));
-  fits &= n.rect.intersect(n.clip).bottom()<=480.5 && s.is_some_and(|s|s.rect.bottom()<=480.5);
- }
- assert!(fits,"notice/send extend below minimum viewport");
+    let mut fits = true;
+    for theme in ["light", "dark"] {
+        let peer = Harness::new(Script::default());
+        let mut g = Gui::new(&peer, 360.0, 480.0);
+        if theme == "dark" {
+            g.click("ダーク");
+        }
+        let f = g.frame(vec![]);
+        let n = f.text("32,000文字");
+        let s = f.text("送信");
+        eprintln!("{theme}: notice={:?}, send={:?}", n.rect, s.rect);
+        fits &= n.rect.intersect(n.clip).bottom() <= 480.5 && s.rect.bottom() <= 480.5;
+        let f = g.connect();
+        let n = f.text("32,000文字");
+        let s = f.texts.iter().find(|t| t.text == "送信");
+        eprintln!(
+            "{theme} READY: notice={:?}, exact send={:?}",
+            n.rect,
+            s.map(|s| s.rect)
+        );
+        fits &= n.rect.intersect(n.clip).bottom() <= 480.5
+            && s.is_some_and(|s| s.rect.bottom() <= 480.5);
+    }
+    assert!(fits, "notice/send extend below minimum viewport");
+}
+
+// ---- work target (stage 5): confirmed in the reception, never handed to the chat -------------
+
+const WORK_HINT: &str = "作業先フォルダの絶対パス";
+
+/// What a user types: the canonical test dir without Windows' verbatim `\\?\` prefix.
+fn typed(path: &std::path::Path) -> String {
+    let s = path.to_str().unwrap();
+    s.strip_prefix(r"\\?\").unwrap_or(s).to_owned()
+}
+
+impl Gui {
+    fn open_monitor(&mut self) {
+        match self.app.layout() {
+            h2o_drift_prototype::native::Layout::Narrow => {
+                self.click("監視");
+            }
+            h2o_drift_prototype::native::Layout::Medium => {
+                self.click("監視パネル");
+            }
+            h2o_drift_prototype::native::Layout::Wide => {}
+        }
+    }
+
+    /// Select all in the focused field, then type `s` over it.
+    fn replace_text(&mut self, s: &str) {
+        self.frame(vec![key(Key::A, Modifiers::COMMAND)]);
+        self.type_text(s);
+    }
+}
+
+#[test]
+fn work_target_confirm_flow_fits_one_line_at_every_breakpoint_and_shows_errors() {
+    use h2o_drift_prototype::work_target::WorkTargetState;
+    let dir = support::TestDir::new();
+    let long = dir
+        .path
+        .join(format!("long-work-target-{}", "x".repeat(90)));
+    std::fs::create_dir(&long).unwrap();
+    let input = typed(&long);
+    for (w, h) in [(MIN_W, MIN_H), (900.0, MIN_H), (1280.0, MIN_H)] {
+        let size = vec2(w, h);
+        let peer = Harness::new(Script::default());
+        let mut g = Gui::new(&peer, w, h);
+        g.open_monitor();
+        let f = g.frame(vec![]);
+        assert!(f.has("作業対象: 未確認"), "{w}: {}", f.joined());
+
+        g.click_shown(WORK_HINT);
+        g.type_text(&input);
+        // no permission chosen yet: 確定 is not possible
+        let f = g.click_shown("確定");
+        assert_eq!(
+            g.app.work_target().state(),
+            WorkTargetState::Proposed,
+            "{w}"
+        );
+        assert!(
+            !f.has("確定済み"),
+            "{w}: confirmed without a permission: {}",
+            f.joined()
+        );
+        assert!(f.has("作業対象: 確認待ち"), "{w}: {}", f.joined());
+
+        g.click_shown("読み書き");
+        let f = g.click_shown("確定");
+        assert_eq!(
+            g.app.work_target().state(),
+            WorkTargetState::Confirmed,
+            "{w}: {}",
+            f.joined()
+        );
+        let rows: Vec<_> = f
+            .texts
+            .iter()
+            .filter(|t| t.text.contains("作業対象: 確定済み"))
+            .collect();
+        assert!(!rows.is_empty(), "{w}: {}", f.joined());
+        for t in rows {
+            assert_eq!(t.rows, 1, "{w}: status row wrapped: {t:?}");
+            assert!(t.rect.right() <= w + 0.5, "{w}: overflow {t:?}");
+            assert!(
+                !t.text.contains(r"\\?\"),
+                "{w}: verbatim prefix shown: {}",
+                t.text
+            );
+        }
+        let row = f.shown(&format!("作業対象: 確定済み: {input} · 読み書き"), size);
+        if w == MIN_W {
+            assert!(
+                row.elided,
+                "long path must be cut with an ellipsis at {w}: {row:?}"
+            );
+        }
+        assert!(
+            f.has("計画（未実行）"),
+            "{w}: plan not labelled as a plan: {}",
+            f.joined()
+        );
+        assert!(
+            f.has("作業対象を確定しても"),
+            "{w}: chat restriction not stated: {}",
+            f.joined()
+        );
+        for t in &f.texts {
+            let r = if t.text == input {
+                t.rect.intersect(t.clip)
+            } else {
+                t.rect
+            };
+            assert!(
+                r.right() <= w + 0.5,
+                "{w} overflow: {:?} {:?}",
+                t.text,
+                t.rect
+            );
+        }
+
+        // a missing path drops the confirmation and shows its own error
+        if w == MIN_W {
+            // the single-line field scrolls its text: click the part that is on screen
+            let f = g.frame(vec![]);
+            let field = f.text(&input);
+            g.click_at(field.rect.intersect(field.clip).center());
+            g.replace_text(&typed(&dir.path.join("missing")));
+            let f = g.frame(vec![]);
+            assert_eq!(g.app.work_target().state(), WorkTargetState::Proposed);
+            assert!(!f.has("確定済み"), "{}", f.joined());
+            let f = g.click_shown("確定");
+            assert!(f.has("作業先が見つかりません"), "{}", f.joined());
+            assert!(
+                !f.has("確定済み") && !f.has("計画（未実行）"),
+                "{}",
+                f.joined()
+            );
+            assert!(
+                !dir.path.join("missing").exists(),
+                "confirm created the directory"
+            );
+        }
+        assert!(
+            peer.requests().is_empty() && peer.endpoints().is_empty(),
+            "{w}: transport touched"
+        );
+    }
+}
+
+#[test]
+fn confirmed_work_target_never_changes_how_the_chat_session_is_created() {
+    use h2o_drift_prototype::chat_transport::CHAT_SYSTEM_PROMPT;
+    use h2o_drift_prototype::work_target::WorkTargetState;
+    use jcode_sdk::PermissionDecision;
+    let dir = support::TestDir::new();
+    let neutral = std::env::temp_dir().join("h2o-native-chat");
+    // a turn that asks for permission: it must be denied whatever the work target says
+    let ask: TurnScript = Arc::new(|s, _| {
+        vec![ev(ApiEvent::PermissionRequest {
+            session_id: s.into(),
+            request_id: "p1".into(),
+            tool_name: "write".into(),
+            description: "write a file".into(),
+        })]
+    });
+    let run = |confirm: bool| -> Vec<String> {
+        let peer = Harness::new(Script {
+            turn: ask.clone(),
+            ..Script::default()
+        });
+        let mut g = Gui::new(&peer, 1280.0, 900.0);
+        if confirm {
+            g.click(WORK_HINT);
+            g.type_text(&typed(&dir.path));
+            g.click("読み書き");
+            g.click("確定");
+            assert_eq!(g.app.work_target().state(), WorkTargetState::Confirmed);
+            g.idle(Duration::from_millis(200));
+            assert!(
+                peer.requests().is_empty() && peer.endpoints().is_empty(),
+                "confirming reached the transport: {:?}",
+                peer.requests()
+            );
+        }
+        g.connect();
+        g.focus_composer();
+        g.type_text("q");
+        g.frame(vec![enter()]);
+        g.until("permission answered", Duration::from_secs(5), |_, _| {
+            peer.count(|r| matches!(r, ApiRequest::PermissionResponse { .. })) > 0
+        });
+        let reqs = peer.requests();
+        let last = reqs
+            .iter()
+            .position(|r| matches!(r, ApiRequest::PermissionResponse { .. }))
+            .unwrap();
+        reqs[..=last]
+            .iter()
+            .filter(|r| !matches!(r, ApiRequest::Ping))
+            .map(|r| match r {
+                ApiRequest::CreateSession {
+                    working_dir,
+                    system_prompt,
+                } => {
+                    assert_eq!(system_prompt.as_deref(), Some(CHAT_SYSTEM_PROMPT));
+                    let wd = std::path::PathBuf::from(working_dir.as_deref().expect("neutral dir"));
+                    assert!(wd.starts_with(&neutral), "not the neutral chat dir: {wd:?}");
+                    assert!(
+                        !wd.starts_with(&dir.path),
+                        "chat got the work target: {wd:?}"
+                    );
+                    // the per-session dir name varies; everything else must be identical
+                    serde_json::to_string(&ApiRequest::CreateSession {
+                        working_dir: Some("<neutral>".into()),
+                        system_prompt: system_prompt.clone(),
+                    })
+                    .unwrap()
+                }
+                ApiRequest::ConfigureTools { tools, .. } => {
+                    assert_eq!(tools.enabled, Some(vec![]), "tools must stay disabled");
+                    serde_json::to_string(r).unwrap()
+                }
+                ApiRequest::PermissionResponse { decision, .. } => {
+                    assert_eq!(*decision, PermissionDecision::Deny, "auto-approved");
+                    serde_json::to_string(r).unwrap()
+                }
+                r => serde_json::to_string(r).unwrap(),
+            })
+            .collect()
+    };
+    let baseline = run(false);
+    let confirmed = run(true);
+    assert!(
+        baseline
+            .iter()
+            .any(|r| r.contains("ConfigureTools") || r.contains("configure_tools")),
+        "{baseline:#?}"
+    );
+    assert_eq!(
+        confirmed, baseline,
+        "a confirmed work target changed the chat session setup"
+    );
 }

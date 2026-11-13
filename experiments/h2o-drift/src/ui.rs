@@ -134,7 +134,9 @@ pub fn validate_snapshot(bytes: &[u8]) -> Result<(), SnapshotError> {
     require_objects(&value).map_err(invalid)?;
     let doc: Envelope = serde_json::from_value(value).map_err(|e| invalid(e.to_string()))?;
     if doc.schema != SNAPSHOT_SCHEMA {
-        return Err(invalid(format!("unsupported schema, expected {SNAPSHOT_SCHEMA}")));
+        return Err(invalid(format!(
+            "unsupported schema, expected {SNAPSHOT_SCHEMA}"
+        )));
     }
     if doc.branches.len() > MAX_BRANCHES {
         return Err(invalid(format!("more than {MAX_BRANCHES} branches")));
@@ -336,7 +338,10 @@ fn route(head: &str, shared: &Shared) -> (Reply, bool) {
         .filter(|(k, _)| k.eq_ignore_ascii_case("host"))
         .map(|(_, v)| v.trim())
         .collect();
-    let allowed = [format!("127.0.0.1:{}", shared.port), format!("localhost:{}", shared.port)];
+    let allowed = [
+        format!("127.0.0.1:{}", shared.port),
+        format!("localhost:{}", shared.port),
+    ];
     if hosts.len() != 1 || !allowed.iter().any(|a| a.eq_ignore_ascii_case(hosts[0])) {
         return (text("403 Forbidden"), head_only);
     }
@@ -444,34 +449,69 @@ mod tests {
         for method in ["GET", "HEAD", "POST", "XGET"] {
             for target in ["/", "/not-a-route", "/api/snapshot"] {
                 for hosts in &variants {
-                    let head = format!("{method} {target} HTTP/1.1\r\n{}\r\nConnection: close", hosts.join("\r\n"));
-                    assert_eq!(status(&head), ("403 Forbidden", method == "HEAD"), "{head:?}");
+                    let head = format!(
+                        "{method} {target} HTTP/1.1\r\n{}\r\nConnection: close",
+                        hosts.join("\r\n")
+                    );
+                    assert_eq!(
+                        status(&head),
+                        ("403 Forbidden", method == "HEAD"),
+                        "{head:?}"
+                    );
                 }
             }
         }
         // Exactly one allowed Host is fine, in either spelling and case.
-        for host in ["Host: 127.0.0.1:5000", "host: localhost:5000", "HOST:   LOCALHOST:5000  "] {
+        for host in [
+            "Host: 127.0.0.1:5000",
+            "host: localhost:5000",
+            "HOST:   LOCALHOST:5000  ",
+        ] {
             let head = format!("GET /not-a-route HTTP/1.1\r\n{host}\r\nConnection: close");
             assert_eq!(status(&head).0, "404 Not Found", "{head:?}");
         }
-        assert_eq!(status("GET / HTTP/1.1\r\nConnection: close").0, "403 Forbidden");
+        assert_eq!(
+            status("GET / HTTP/1.1\r\nConnection: close").0,
+            "403 Forbidden"
+        );
     }
 
     #[test]
     fn route_matches_the_raw_target_exactly() {
-        for target in ["/?", "/?x", "/app.css?x", "/app.css?", "/api/snapshot?anything", "/#", "/app.js#x"] {
+        for target in [
+            "/?",
+            "/?x",
+            "/app.css?x",
+            "/app.css?",
+            "/api/snapshot?anything",
+            "/#",
+            "/app.js#x",
+        ] {
             for method in ["GET", "HEAD"] {
                 let head = format!("{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:5000");
-                assert_eq!(status(&head), ("404 Not Found", method == "HEAD"), "{head:?}");
+                assert_eq!(
+                    status(&head),
+                    ("404 Not Found", method == "HEAD"),
+                    "{head:?}"
+                );
             }
         }
-        assert_eq!(status("GET /api/snapshot HTTP/1.1\r\nHost: 127.0.0.1:5000").0, "200 OK");
+        assert_eq!(
+            status("GET /api/snapshot HTTP/1.1\r\nHost: 127.0.0.1:5000").0,
+            "200 OK"
+        );
     }
 
     #[test]
     fn head_is_identified_on_every_route_stage_error() {
-        assert_eq!(status("HEAD / HTTP/9.9\r\nHost: 127.0.0.1:5000"), ("400 Bad Request", true));
+        assert_eq!(
+            status("HEAD / HTTP/9.9\r\nHost: 127.0.0.1:5000"),
+            ("400 Bad Request", true)
+        );
         assert_eq!(status("HEAD /"), ("400 Bad Request", true));
-        assert_eq!(status("GET / HTTP/9.9\r\nHost: 127.0.0.1:5000"), ("400 Bad Request", false));
+        assert_eq!(
+            status("GET / HTTP/9.9\r\nHost: 127.0.0.1:5000"),
+            ("400 Bad Request", false)
+        );
     }
 }
