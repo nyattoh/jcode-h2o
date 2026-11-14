@@ -916,6 +916,15 @@ fn ui(args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn cli_help_exits_zero_with_usage() {
+    let out = ui(&["--help"]);
+    assert!(out.status.success(), "{:?}", out.status);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("usage: h2o-ui"), "{stdout}");
+    assert!(out.stderr.is_empty());
+}
+
+#[test]
 fn cli_bad_arguments_exit_2_with_usage_and_serve_nothing() {
     let dir = assets_dir();
     let assets = dir.path.to_str().unwrap();

@@ -6,10 +6,13 @@ use std::{collections::HashMap, path::PathBuf, process::ExitCode};
 const USAGE: &str = "usage: h2o-ui [--port <0-65535>] [--assets <dir>] [--snapshot <file>]";
 const VALUES: [&str; 3] = ["--port", "--assets", "--snapshot"];
 
-fn parse(args: impl Iterator<Item = String>) -> Result<HashMap<String, String>, String> {
+fn parse(args: impl Iterator<Item = String>) -> Result<Option<HashMap<String, String>>, String> {
     let mut map = HashMap::new();
     let mut args = args;
     while let Some(arg) = args.next() {
+        if matches!(arg.as_str(), "-h" | "--help") {
+            return Ok(None);
+        }
         if !VALUES.contains(&arg.as_str()) {
             return Err(format!("unknown argument {arg}"));
         }
@@ -18,7 +21,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<HashMap<String, String>, 
             return Err(format!("{arg} given twice"));
         }
     }
-    Ok(map)
+    Ok(Some(map))
 }
 
 fn main() -> ExitCode {
@@ -27,7 +30,11 @@ fn main() -> ExitCode {
         ExitCode::from(2)
     };
     let args = match parse(std::env::args().skip(1)) {
-        Ok(args) => args,
+        Ok(Some(args)) => args,
+        Ok(None) => {
+            println!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
         Err(message) => return usage(message),
     };
     let port = match args.get("--port").map(|p| p.parse::<u16>()) {

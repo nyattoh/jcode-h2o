@@ -38,6 +38,18 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
+fn help_prints_usage_and_exits_zero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_h2o-monitor"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("usage: h2o-monitor"), "{out}");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn missing_enable_jev_exits_before_connecting() {
     let root = TestDir::new();
     let (output, _) = monitor(&root, &[], "root");

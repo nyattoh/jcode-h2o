@@ -1,49 +1,33 @@
 # Continuity Ledger
 
 - Goal (incl. success criteria):
-  - `jcode-h2o` の単一バイナリ完全内蔵型デスクトップアプリ（`h2o-native.exe`）の実装
-  - 承認されたブループリントに基づく Option B（Tokio + `jcode-app-core` + `jcode-harness-api-server` のインプロセス統合）
-  - 全 CI ガードレール（`cargo check --locked --features "native-ui jev"`, `cargo metadata --locked`, `git diff --exit-code -- experiments/h2o-drift/Cargo.lock`, 既存186テスト）を100%パス
-  - ゼロサイドエフェクト起動（起動時は完全休眠、接続ボタン押下時のみ遅延初期化）
-  - Windows サブシステム対応（`windows_subsystem = "windows"` かつ `AttachConsole` で `--help` 出力両立）
-  - 切断時・ウィンドウ終了時の安全なリソース回収（RAII Drop）
+  - `jcode-h2o` の単一バイナリ完全内蔵型デスクトップアプリ（`h2o-native.exe`）の Windows ツール整備・リリースビルド生成・ドキュメント更新
+  - `scripts/h2o.ps1` の更新: `test` に `embedded-runtime` 統合テストを追加、`run-native` の `-Cargo` 実行時に `embedded-runtime` を含める
+  - `target/h2o-native/release/h2o-native.exe` の生成、PE Subsystem = 2 (`IMAGE_SUBSYSTEM_WINDOWS_GUI`)、親コンソール `--help` 出力（exit 0）の検証
+  - `README.md` および `experiments/h2o-drift/README.md` の日本語更新（完全内蔵型アーキテクチャ、ゼロサイドエフェクト、Named Pipe IPC、フォールバック外部ソケット、デモモード、検証/未検証ステータス明記）
 - Constraints/Assumptions:
-  - `README.md`, `experiments/h2o-drift/README.md`, `scripts/h2o.ps1` はドキュメント専門エージェントが更新するため変更しない（RustコードおよびCargoマニフェスト・ロックファイルのみ変更）
-  - `src/` や `crates/` の `jcode` コア挙動を温存し、必要な場合のみ最小限の調整にとどめる（可能なら変更ゼロ）
-  - 受付チャットの安全不変条件（`configure_tools(enabled=[], custom=[])`, `NeutralDir` 隔離, 32k コンテキスト等）を100%維持
-  - Windows では `RUSTC_WRAPPER` 環境変数の扱いに注意（Git Bash 経由 `export RUSTC_WRAPPER=` を使用）
+  - `.rs` ファイルは一切変更しない（ツーリング・ドキュメント専門エージェントの責務境界を遵守）
+  - PowerShell 5.1 / 7+ の両対応（`CARGO_BUILD_RUSTC_WRAPPER=""` 回避策の維持）
+  - Git identity は設定済みの `nyattoh` を使用
 - Key decisions:
-  - Feature フラグ `embedded-runtime` を `native-ui` から分離しオプトイン化
-  - 内部IPCに Windows Named Pipe（SHA-256 パスハッシュ）を利用し、外部ポート開放なし
-  - `attach_console_if_needed()` により親コンソールへのアタッチと GUI モード（Explorerダブルクリック）の両立
-  - `NativeApp::drop` で `disconnect()` を呼び出し、RAII による確実なリソース破棄
+  - `scripts/h2o.ps1 test` の既定実行に `native-ui,embedded-runtime --test embedded_runtime` を組み込み、`-Features embedded-runtime` も受け付け可能に拡張
+  - `scripts/h2o.ps1 run-native` の `-Cargo` オプション時の `--features` を `native-ui,embedded-runtime` に更新
 - State:
   - Done:
-    - 既存テストスイートのベースライン確認完了
-    - `experiments/h2o-drift/Cargo.toml` に `embedded-runtime` feature および optional 依存関係を追加
-    - `Cargo.lock` のクリーンな更新とコミット
-    - `src/embedded_runtime.rs` の実装（Tokio + Server + Bridge + RAII drop）
-    - `src/native_ui.rs` の改修（エンドポイント空欄時の内蔵ランタイム起動、状態遷移、切断・クリーンアップ）
-    - `src/bin/h2o-native.rs` の改修（`windows_subsystem = "windows"` + `AttachConsole`）
-    - `tests/h2o_native_bin.rs` の作成（CLI `--help`, `-h`, 不正引数の検証）
-    - `tests/embedded_runtime.rs` の作成（組み込みランタイムライフサイクルと安全不変条件）
-    - release ビルド（`h2o-native.exe`）の生成確認（87.6MB、PE Subsystem = 2 GUI）
-    - CLI `--help` の親コンソール出力確認
-    - 既存テストスイート（189 tests）および組み込みランタイム統合テスト（3 tests）の全件パス確認
-    - CI ガードレール（`cargo check --locked`, `cargo metadata --locked`, `clippy -D warnings`, `cargo fmt --check`）完全パス
-    - 変更の Git コミットおよびリモート `h2o/main` への push 完了
+    - Core Rust Engineer による `h2o-native` 組み込みランタイム実装の検証完了
+    - 既存 189 テスト、組み込みランタイム 3 テスト、clippy（-D warnings）の全件パス確認
   - Now:
-    - タスク完了・結果報告
+    - `.\scripts\h2o.ps1 build-release` による release バイナリ生成中
   - Next:
-    - ドキュメント・ツーリング担当エージェントへの引き継ぎ
+    - PE Subsystem (2: GUI) および `--help` 動作確認
+    - `scripts/h2o.ps1` の更新
+    - `README.md` および `experiments/h2o-drift/README.md` の更新
+    - 変更のコミットとプッシュ、完了報告
 - Open questions (UNCONFIRMED if needed):
   - なし
 - Working set (files/ids/commands):
-  - `experiments/h2o-drift/Cargo.toml`
-  - `experiments/h2o-drift/Cargo.lock`
-  - `experiments/h2o-drift/src/lib.rs`
-  - `experiments/h2o-drift/src/embedded_runtime.rs`
-  - `experiments/h2o-drift/src/native_ui.rs`
-  - `experiments/h2o-drift/src/bin/h2o-native.rs`
-  - `experiments/h2o-drift/tests/h2o_native_bin.rs`
-  - `experiments/h2o-drift/tests/embedded_runtime.rs`
+  - `scripts/h2o.ps1`
+  - `README.md`
+  - `experiments/h2o-drift/README.md`
+  - `target/h2o-native/release/h2o-native.exe`
+  - `docs/short-term-plan/CONTINUITY.md`

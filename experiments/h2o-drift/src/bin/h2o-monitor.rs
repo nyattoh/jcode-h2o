@@ -28,10 +28,13 @@ const VALUES: [&str; 11] = [
     "--poll-ms",
 ];
 
-fn parse(args: impl Iterator<Item = String>) -> Result<HashMap<String, String>, String> {
+fn parse(args: impl Iterator<Item = String>) -> Result<Option<HashMap<String, String>>, String> {
     let mut map = HashMap::new();
     let mut args = args;
     while let Some(arg) = args.next() {
+        if matches!(arg.as_str(), "-h" | "--help") {
+            return Ok(None);
+        }
         let value = if FLAGS.contains(&arg.as_str()) {
             String::new()
         } else if VALUES.contains(&arg.as_str()) {
@@ -43,7 +46,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<HashMap<String, String>, 
             return Err(format!("{arg} given twice"));
         }
     }
-    Ok(map)
+    Ok(Some(map))
 }
 
 fn number<T: std::str::FromStr>(
@@ -55,8 +58,10 @@ fn number<T: std::str::FromStr>(
         .transpose()
 }
 
-fn main_inner() -> Result<(RunEnd, u64), String> {
-    let args = parse(std::env::args().skip(1))?;
+fn main_inner() -> Result<Option<(RunEnd, u64)>, String> {
+    let Some(args) = parse(std::env::args().skip(1))? else {
+        return Ok(None);
+    };
     if !args.contains_key("--enable-jev") {
         return Err("--enable-jev is required: this sends goal and tool output to Jev".into());
     }
@@ -107,12 +112,18 @@ fn main_inner() -> Result<(RunEnd, u64), String> {
         ..ConnectOptions::default()
     })
     .map_err(|e| format!("connect: {e}"))?;
-    run(client, spec, sources, &journal, &mut judge, poll).map_err(|e| format!("monitor: {e}"))
+    run(client, spec, sources, &journal, &mut judge, poll)
+        .map(Some)
+        .map_err(|e| format!("monitor: {e}"))
 }
 
 fn main() -> ExitCode {
     match main_inner() {
-        Ok((end, checkpoints)) => {
+        Ok(None) => {
+            println!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        Ok(Some((end, checkpoints))) => {
             println!("{end:?} checkpoints={checkpoints}");
             // Uncertain control must not look like a clean finish to a calling script.
             match end {
