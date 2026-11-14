@@ -21,18 +21,21 @@
   - Done:
     - 既存テストスイートのベースライン確認完了
     - `experiments/h2o-drift/Cargo.toml` に `embedded-runtime` feature および optional 依存関係を追加
-    - `Cargo.lock` のクリーンな更新
+    - `Cargo.lock` のクリーンな更新とコミット
     - `src/embedded_runtime.rs` の実装（Tokio + Server + Bridge + RAII drop）
     - `src/native_ui.rs` の改修（エンドポイント空欄時の内蔵ランタイム起動、状態遷移、切断・クリーンアップ）
     - `src/bin/h2o-native.rs` の改修（`windows_subsystem = "windows"` + `AttachConsole`）
     - `tests/h2o_native_bin.rs` の作成（CLI `--help`, `-h`, 不正引数の検証）
     - `tests/embedded_runtime.rs` の作成（組み込みランタイムライフサイクルと安全不変条件）
+    - release ビルド（`h2o-native.exe`）の生成確認（87.6MB、PE Subsystem = 2 GUI）
+    - CLI `--help` の親コンソール出力確認
+    - 既存テストスイート（189 tests）および組み込みランタイム統合テスト（3 tests）の全件パス確認
+    - CI ガードレール（`cargo check --locked`, `cargo metadata --locked`, `clippy -D warnings`, `cargo fmt --check`）完全パス
+    - 変更の Git コミットおよびリモート `h2o/main` への push 完了
   - Now:
-    - release ビルド（`h2o-native.exe`）の完了待ち
+    - タスク完了・結果報告
   - Next:
-    - 全テストの実行と検証（`cargo test`）
-    - `cargo check --locked --features "native-ui jev"` の確認
-    - `cargo clippy -- -D warnings` および `cargo fmt` の確認
+    - ドキュメント・ツーリング担当エージェントへの引き継ぎ
 - Open questions (UNCONFIRMED if needed):
   - なし
 - Working set (files/ids/commands):

@@ -21,11 +21,11 @@
     - [x] 切断時・ウィンドウ終了時のランタイム Drop
     - [x] 外部ソケット指定フォールバックおよびデモモードの維持
     - [x] 受付チャットの安全不変条件（`configure_tools(enabled=[])` 等）の維持
-- [/] Phase 4: テスト実装と検証
+- [x] Phase 4: テスト実装と検証
   - [x] 組み込みランタイムライフサイクルの単体・統合テスト（`tests/embedded_runtime.rs`）
   - [x] ヘッドレスUI状態遷移テスト
   - [x] Windows GUIサブシステム / `--help` 動作確認（`tests/h2o_native_bin.rs`）
-  - [/] release ビルドの完了確認
-  - [ ] 既存186テスト + 新規テスト全件パス確認（`native-ui jev` & `native-ui,embedded-runtime`）
-  - [ ] `cargo fmt` および `cargo clippy -- -D warnings` の確認
-  - [ ] `cargo check --locked --features "native-ui jev"` および `cargo metadata --locked` の最終確認
+  - [x] release ビルドの完了確認
+  - [x] 既存186テスト + 新規テスト全件パス確認（`native-ui jev` & `native-ui,embedded-runtime`）
+  - [x] `cargo fmt` および `cargo clippy -- -D warnings` の確認
+  - [x] `cargo check --locked --features "native-ui jev"` および `cargo metadata --locked` の最終確認
