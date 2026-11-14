@@ -856,6 +856,10 @@ impl NativeApp {
                     self.set_mode(k);
                 }
             }
+            #[cfg(feature = "embedded-runtime")]
+            if kind == Kind::Real {
+                ui.label(RichText::new("内蔵ランタイム対応").small().color(p.ok));
+            }
         });
         if kind == Kind::Demo {
             return;
@@ -896,12 +900,6 @@ impl NativeApp {
                 }
             }
         });
-        #[cfg(feature = "embedded-runtime")]
-        {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("内蔵ランタイム対応").small().color(p.ok));
-            });
-        }
         let active = self.chat.active();
         let ready = active.and_then(|s| match &s.link {
             Link::Ready {

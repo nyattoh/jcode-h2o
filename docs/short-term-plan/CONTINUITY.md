@@ -1,33 +1,32 @@
 # Continuity Ledger
 
 - Goal (incl. success criteria):
-  - `jcode-h2o` の単一バイナリ完全内蔵型デスクトップアプリ（`h2o-native.exe`）の Windows ツール整備・リリースビルド生成・ドキュメント更新
-  - `scripts/h2o.ps1` の更新: `test` に `embedded-runtime` 統合テストを追加、`run-native` の `-Cargo` 実行時に `embedded-runtime` を含める
-  - `target/h2o-native/release/h2o-native.exe` の生成、PE Subsystem = 2 (`IMAGE_SUBSYSTEM_WINDOWS_GUI`)、親コンソール `--help` 出力（exit 0）の検証
-  - `README.md` および `experiments/h2o-drift/README.md` の日本語更新（完全内蔵型アーキテクチャ、ゼロサイドエフェクト、Named Pipe IPC、フォールバック外部ソケット、デモモード、検証/未検証ステータス明記）
+  - Round 1 Independent Principal Verifier の指摘事項の完全修正
+  - feature 'embedded-runtime' 有効時における `chat_ui` テスト `minimum_window_keeps_send_and_cancel_usable_and_the_notice_readable_in_both_themes` のタイムアウト修正
+  - `experiments/h2o-drift/src/native_ui.rs` の「内蔵ランタイム対応」表示のレイアウト最適化（独立行消費による最小ウィンドウ（360×480）中央パネル圧迫・描画カリングの解消）
+  - `cargo fmt`, `.\scripts\h2o.ps1 clippy`, `.\scripts\h2o.ps1 test`, `.\scripts\h2o.ps1 build-release` の全件パスおよび残存バックグラウンドプロセスのゼロ確認
 - Constraints/Assumptions:
-  - `.rs` ファイルは一切変更しない（ツーリング・ドキュメント専門エージェントの責務境界を遵守）
   - PowerShell 5.1 / 7+ の両対応（`CARGO_BUILD_RUSTC_WRAPPER=""` 回避策の維持）
   - Git identity は設定済みの `nyattoh` を使用
+  - 不要なプロセスの残留を許容しない
 - Key decisions:
-  - `scripts/h2o.ps1 test` の既定実行に `native-ui,embedded-runtime --test embedded_runtime` を組み込み、`-Features embedded-runtime` も受け付け可能に拡張
-  - `scripts/h2o.ps1 run-native` の `-Cargo` オプション時の `--features` を `native-ui,embedded-runtime` に更新
+  - `native_ui.rs` の「内蔵ランタイム対応」ラベルを独立行ではなく、モード選択行（「実会話」「デモモード」の水平行）にインライン統合。これにより最小ウィンドウ（360×480）での固定縦幅増加をゼロに抑え、メッセージ描画領域の必要な高さを完全に維持。
 - State:
   - Done:
-    - Core Rust Engineer による `h2o-native` 組み込みランタイム実装の検証完了
-    - 既存 189 テスト、組み込みランタイム 3 テスト、clippy（-D warnings）の全件パス確認
+    - `native_ui.rs` のレイアウト修正（モード選択行へのインライン統合）
+    - `.\scripts\h2o.ps1 test -Features embedded-runtime`（`chat_ui` 20件全件パス、`embedded_runtime` 3件全件パス含む全テストパス）
+    - `cargo fmt --manifest-path experiments/h2o-drift/Cargo.toml --check` および `.\scripts\h2o.ps1 clippy`（-D warnings パス）
+    - `.\scripts\h2o.ps1 test`（オフライン全件テストパス）
+    - `.\scripts\h2o.ps1 build-release`（release バイナリ最新化完了）
+    - PE Subsystem = 2 (IMAGE_SUBSYSTEM_WINDOWS_GUI) および `--help` 出力（exit 0）の検証
+    - 残存バックグラウンドプロセス 0 件確認
   - Now:
-    - `.\scripts\h2o.ps1 build-release` による release バイナリ生成中
+    - 変更のコミットとプッシュ
   - Next:
-    - PE Subsystem (2: GUI) および `--help` 動作確認
-    - `scripts/h2o.ps1` の更新
-    - `README.md` および `experiments/h2o-drift/README.md` の更新
-    - 変更のコミットとプッシュ、完了報告
+    - 完了報告
 - Open questions (UNCONFIRMED if needed):
   - なし
 - Working set (files/ids/commands):
-  - `scripts/h2o.ps1`
-  - `README.md`
-  - `experiments/h2o-drift/README.md`
+  - `experiments/h2o-drift/src/native_ui.rs`
   - `target/h2o-native/release/h2o-native.exe`
   - `docs/short-term-plan/CONTINUITY.md`
