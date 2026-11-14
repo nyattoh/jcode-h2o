@@ -309,6 +309,8 @@ pub struct NativeApp {
     work_error: Option<WorkTargetError>,
     /// Produced on 確定; a data value only, no work session is started from it.
     work_plan: Option<WorkSessionPlan>,
+    #[cfg(feature = "embedded-runtime")]
+    embedded_runtime: Option<crate::embedded_runtime::EmbeddedRuntime>,
 }
 
 impl eframe::App for NativeApp {
@@ -345,6 +347,8 @@ impl NativeApp {
             work_target: WorkTarget::default(),
             work_error: None,
             work_plan: None,
+            #[cfg(feature = "embedded-runtime")]
+            embedded_runtime: None,
         }
     }
 
@@ -356,6 +360,9 @@ impl NativeApp {
 
     pub fn chat(&self) -> &Chat {
         &self.chat
+    }
+    pub fn chat_mut(&mut self) -> &mut Chat {
+        &mut self.chat
     }
     pub fn composer(&self) -> &str {
         &self.composer
@@ -406,19 +413,60 @@ impl NativeApp {
         self.chat.mode() == Kind::Demo || !self.chat.awaiting()
     }
 
-    /// Explicit connect to an existing jcode endpoint. Starts nothing else.
-    fn connect(&mut self) {
+    #[cfg(feature = "embedded-runtime")]
+    pub fn is_embedded_runtime_running(&self) -> bool {
+        self.embedded_runtime.is_some()
+    }
+
+    pub fn set_endpoint_input(&mut self, endpoint: impl Into<String>) {
+        self.endpoint_input = endpoint.into();
+    }
+
+    /// Explicit disconnect: closes client connection and stops any embedded runtime.
+    pub fn disconnect(&mut self) {
+        self.controller.disconnect();
+        #[cfg(feature = "embedded-runtime")]
+        {
+            self.embedded_runtime = None;
+        }
+    }
+
+    /// Explicit connect to an existing jcode endpoint or to the in-process embedded runtime.
+    pub fn connect(&mut self) {
         let endpoint = self.endpoint_input.trim().trim_matches('"').to_owned();
+        #[cfg(feature = "embedded-runtime")]
+        let endpoint = if endpoint.is_empty() {
+            match crate::embedded_runtime::EmbeddedRuntime::start() {
+                Ok(runtime) => {
+                    let socket_path = runtime.api_socket().to_string_lossy().into_owned();
+                    self.embedded_runtime = Some(runtime);
+                    socket_path
+                }
+                Err(e) => {
+                    self.chat.error = Some(format!("内蔵ランタイムの起動に失敗しました: {e}"));
+                    return;
+                }
+            }
+        } else {
+            self.embedded_runtime = None;
+            endpoint
+        };
+        #[cfg(not(feature = "embedded-runtime"))]
         if endpoint.is_empty() {
             self.chat.error = Some("エンドポイントを入力してください".into());
             return;
         }
+
         let id = self.chat.connect_target();
         let config = ConnectConfig {
             endpoint: endpoint.into(),
             ..ConnectConfig::default()
         };
         if let Err(e) = self.controller.connect(config, id) {
+            #[cfg(feature = "embedded-runtime")]
+            {
+                self.embedded_runtime = None;
+            }
             self.chat.rejected(id, &e);
         }
         self.pane = Pane::Chat;
@@ -452,6 +500,10 @@ impl NativeApp {
     /// Drains controller events (never blocks) and keeps polling while one is expected.
     fn poll(&mut self, ctx: &egui::Context) {
         while let Some(event) = self.controller.try_recv() {
+            #[cfg(feature = "embedded-runtime")]
+            if matches!(event, crate::chat_transport::ChatEvent::Disconnected { .. }) {
+                self.embedded_runtime = None;
+            }
             self.chat.apply(event);
         }
         if let Some(id) = self.chat.active_id()
@@ -811,16 +863,24 @@ impl NativeApp {
         let bridge = self.chat.bridge().clone();
         ui.horizontal(|ui| {
             let button_w = 64.0;
+            let hint_text = if cfg!(feature = "embedded-runtime") {
+                "空欄: 内蔵ランタイムを使用 / または既存jcodeのソケットパス（例: …/jcode-api.sock）"
+            } else {
+                "既存jcodeのソケットパス（例: …/jcode-api.sock）"
+            };
             ui.add_enabled(
                 matches!(bridge, Bridge::Disconnected { .. }),
                 TextEdit::singleline(&mut self.endpoint_input)
-                    .hint_text("既存jcodeのソケットパス（例: …/jcode-api.sock）")
+                    .hint_text(hint_text)
                     .desired_width((ui.available_width() - button_w - 8.0).max(40.0)),
             );
             let (label, connect) = match bridge {
                 Bridge::Disconnected { .. } => ("接続", true),
                 _ => ("切断", false),
             };
+            #[cfg(feature = "embedded-runtime")]
+            let enabled = true;
+            #[cfg(not(feature = "embedded-runtime"))]
             let enabled = !connect || !self.endpoint_input.trim().is_empty();
             if ui
                 .add_enabled(
@@ -832,10 +892,16 @@ impl NativeApp {
                 if connect {
                     self.connect();
                 } else {
-                    self.controller.disconnect();
+                    self.disconnect();
                 }
             }
         });
+        #[cfg(feature = "embedded-runtime")]
+        {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("内蔵ランタイム対応").small().color(p.ok));
+            });
+        }
         let active = self.chat.active();
         let ready = active.and_then(|s| match &s.link {
             Link::Ready {
@@ -853,6 +919,13 @@ impl NativeApp {
             }
             // logical readiness: C1 holds no socket between turns and re-checks on every Send
             (Bridge::Connected, Some(_)) => {
+                #[cfg(feature = "embedded-runtime")]
+                if self.embedded_runtime.is_some() {
+                    "接続設定済み（内蔵ランタイム・プロセス内IPC） — 送信ごとに再確認（隔離セッション・ツール無効化）".into()
+                } else {
+                    "接続設定済み — 送信ごとに再確認（隔離セッション・ツール無効化）".into()
+                }
+                #[cfg(not(feature = "embedded-runtime"))]
                 "接続設定済み — 送信ごとに再確認（隔離セッション・ツール無効化）".into()
             }
             (Bridge::Connected, None) => {
@@ -1322,4 +1395,10 @@ fn branch_ui(ui: &mut egui::Ui, b: &BranchRow) {
                 );
             }
         });
+}
+
+impl Drop for NativeApp {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
 }

@@ -12,6 +12,13 @@ sdk = ["dep:jcode-sdk", "dep:serde", "dep:serde_json"]
 jev = ["sdk", "dep:ureq"]
 ui = ["sdk"]
 native-ui = ["ui", "dep:eframe"]
+embedded-runtime = [
+    "native-ui",
+    "dep:jcode-app-core",
+    "dep:jcode-harness-api-server",
+    "dep:tokio",
+    "dep:tempfile",
+]
 
 [dependencies]
 jcode-sdk = { path = "../../crates/jcode-sdk", optional = true }
@@ -19,6 +26,12 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 ureq = { version = "=3.1.4", default-features = false, features = ["rustls"], optional = true }
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"], optional = true }
+
+# 組み込みランタイム用 optional 依存（embedded-runtime 有効時のみ解決・コンパイル）
+jcode-app-core = { path = "../../crates/jcode-app-core", default-features = false, optional = true }
+jcode-harness-api-server = { path = "../../crates/jcode-harness-api-server", optional = true }
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread"], optional = true }
+tempfile = { version = "3", optional = true }
 
 [[bin]]
 name = "h2o-monitor"

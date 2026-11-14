@@ -1,0 +1,31 @@
+# Implementation Tracking
+
+## Tasks
+- [x] Phase 1: ベースライン確認とマニフェスト構成
+  - [x] 既存テストスイート（186 tests）のベースライン確認
+  - [x] `experiments/h2o-drift/Cargo.toml` に `embedded-runtime` feature および optional 依存関係を追加
+  - [x] `Cargo.lock` のクリーンな更新
+  - [x] CI ガードレール（`cargo check --locked --features "native-ui jev"`）が警告・エラーなしで通過することを確認
+- [x] Phase 2: `EmbeddedRuntime` の設計・実装 (`src/embedded_runtime.rs`)
+  - [x] `EmbeddedRuntime` 構造体およびライフサイクル管理（`start()`, `Drop` での task abort & temp dir cleanup）の実装
+  - [x] `jcode-app-core::provider::MultiProvider::new_fast()` によるプロバイダー初期化
+  - [x] `jcode-app-core::server::Server::new_with_paths` によるデーモンサーバー起動
+  - [x] `jcode-harness-api-server::run_bridge` による Harness API ブリッジ起動
+  - [x] ソケット/Named Pipe リスナーの接続待機ユーティリティ
+  - [x] `src/lib.rs` へのモジュール登録（`#[cfg(feature = "embedded-runtime")]`）
+- [x] Phase 3: UI および Windows サブシステム統合
+  - [x] `src/bin/h2o-native.rs`: `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` と `AttachConsole(ATTACH_PARENT_PROCESS)` によるコンソール出力両立
+  - [x] `src/native_ui.rs`:
+    - [x] エンドポイント空欄時の内蔵ランタイム自動起動対応
+    - [x] 接続・切断時の状態遷移とゼロサイドエフェクト維持
+    - [x] 切断時・ウィンドウ終了時のランタイム Drop
+    - [x] 外部ソケット指定フォールバックおよびデモモードの維持
+    - [x] 受付チャットの安全不変条件（`configure_tools(enabled=[])` 等）の維持
+- [/] Phase 4: テスト実装と検証
+  - [x] 組み込みランタイムライフサイクルの単体・統合テスト（`tests/embedded_runtime.rs`）
+  - [x] ヘッドレスUI状態遷移テスト
+  - [x] Windows GUIサブシステム / `--help` 動作確認（`tests/h2o_native_bin.rs`）
+  - [/] release ビルドの完了確認
+  - [ ] 既存186テスト + 新規テスト全件パス確認（`native-ui jev` & `native-ui,embedded-runtime`）
+  - [ ] `cargo fmt` および `cargo clippy -- -D warnings` の確認
+  - [ ] `cargo check --locked --features "native-ui jev"` および `cargo metadata --locked` の最終確認

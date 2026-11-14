@@ -23,3 +23,6 @@ pub mod native;
 
 #[cfg(feature = "native-ui")]
 pub mod native_ui;
+
+#[cfg(feature = "embedded-runtime")]
+pub mod embedded_runtime;

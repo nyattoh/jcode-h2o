@@ -1,0 +1,46 @@
+# Continuity Ledger
+
+- Goal (incl. success criteria):
+  - `jcode-h2o` の単一バイナリ完全内蔵型デスクトップアプリ（`h2o-native.exe`）の実装
+  - 承認されたブループリントに基づく Option B（Tokio + `jcode-app-core` + `jcode-harness-api-server` のインプロセス統合）
+  - 全 CI ガードレール（`cargo check --locked --features "native-ui jev"`, `cargo metadata --locked`, `git diff --exit-code -- experiments/h2o-drift/Cargo.lock`, 既存186テスト）を100%パス
+  - ゼロサイドエフェクト起動（起動時は完全休眠、接続ボタン押下時のみ遅延初期化）
+  - Windows サブシステム対応（`windows_subsystem = "windows"` かつ `AttachConsole` で `--help` 出力両立）
+  - 切断時・ウィンドウ終了時の安全なリソース回収（RAII Drop）
+- Constraints/Assumptions:
+  - `README.md`, `experiments/h2o-drift/README.md`, `scripts/h2o.ps1` はドキュメント専門エージェントが更新するため変更しない（RustコードおよびCargoマニフェスト・ロックファイルのみ変更）
+  - `src/` や `crates/` の `jcode` コア挙動を温存し、必要な場合のみ最小限の調整にとどめる（可能なら変更ゼロ）
+  - 受付チャットの安全不変条件（`configure_tools(enabled=[], custom=[])`, `NeutralDir` 隔離, 32k コンテキスト等）を100%維持
+  - Windows では `RUSTC_WRAPPER` 環境変数の扱いに注意（Git Bash 経由 `export RUSTC_WRAPPER=` を使用）
+- Key decisions:
+  - Feature フラグ `embedded-runtime` を `native-ui` から分離しオプトイン化
+  - 内部IPCに Windows Named Pipe（SHA-256 パスハッシュ）を利用し、外部ポート開放なし
+  - `attach_console_if_needed()` により親コンソールへのアタッチと GUI モード（Explorerダブルクリック）の両立
+  - `NativeApp::drop` で `disconnect()` を呼び出し、RAII による確実なリソース破棄
+- State:
+  - Done:
+    - 既存テストスイートのベースライン確認完了
+    - `experiments/h2o-drift/Cargo.toml` に `embedded-runtime` feature および optional 依存関係を追加
+    - `Cargo.lock` のクリーンな更新
+    - `src/embedded_runtime.rs` の実装（Tokio + Server + Bridge + RAII drop）
+    - `src/native_ui.rs` の改修（エンドポイント空欄時の内蔵ランタイム起動、状態遷移、切断・クリーンアップ）
+    - `src/bin/h2o-native.rs` の改修（`windows_subsystem = "windows"` + `AttachConsole`）
+    - `tests/h2o_native_bin.rs` の作成（CLI `--help`, `-h`, 不正引数の検証）
+    - `tests/embedded_runtime.rs` の作成（組み込みランタイムライフサイクルと安全不変条件）
+  - Now:
+    - release ビルド（`h2o-native.exe`）の完了待ち
+  - Next:
+    - 全テストの実行と検証（`cargo test`）
+    - `cargo check --locked --features "native-ui jev"` の確認
+    - `cargo clippy -- -D warnings` および `cargo fmt` の確認
+- Open questions (UNCONFIRMED if needed):
+  - なし
+- Working set (files/ids/commands):
+  - `experiments/h2o-drift/Cargo.toml`
+  - `experiments/h2o-drift/Cargo.lock`
+  - `experiments/h2o-drift/src/lib.rs`
+  - `experiments/h2o-drift/src/embedded_runtime.rs`
+  - `experiments/h2o-drift/src/native_ui.rs`
+  - `experiments/h2o-drift/src/bin/h2o-native.rs`
+  - `experiments/h2o-drift/tests/h2o_native_bin.rs`
+  - `experiments/h2o-drift/tests/embedded_runtime.rs`

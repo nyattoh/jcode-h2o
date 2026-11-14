@@ -1,6 +1,8 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! Native (egui) reception UI. Starts unconnected in real-chat mode: it talks to an EXISTING
-//! jcode harness API socket only after the user enters its path and clicks 接続 (never starts a
-//! daemon, logs in, reads keys, picks a model or sends a prompt by itself). The fixed demo is a
+//! jcode harness API socket, or starts the in-process embedded runtime when left blank, only
+//! after the user clicks 接続 (never starts a daemon or connects on app launch). The fixed demo is a
 //! separate, explicitly chosen mode. Usage: h2o-native [--snapshot <file>]
 use eframe::egui;
 use h2o_drift_prototype::native_ui::{NativeApp, install_japanese_font};
@@ -8,12 +10,32 @@ use std::{path::PathBuf, process::ExitCode};
 
 const USAGE: &str = "usage: h2o-native [--snapshot <file>]";
 
+#[cfg(windows)]
+unsafe extern "system" {
+    fn AttachConsole(dwProcessId: u32) -> i32;
+    fn GetStdHandle(nStdHandle: u32) -> *mut std::ffi::c_void;
+}
+
+#[cfg(windows)]
+fn attach_console_if_needed() {
+    unsafe {
+        // STD_OUTPUT_HANDLE = ((DWORD)-11) = 0xFFFF_FFF5
+        let stdout_handle = GetStdHandle(0xFFFF_FFF5);
+        if stdout_handle.is_null() || stdout_handle == (-1isize as *mut std::ffi::c_void) {
+            // ATTACH_PARENT_PROCESS = ((DWORD)-1) = u32::MAX
+            let _ = AttachConsole(u32::MAX);
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
     let mut snapshot: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("-h" | "--help") => {
+                #[cfg(windows)]
+                attach_console_if_needed();
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
             }
@@ -45,6 +67,8 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            #[cfg(windows)]
+            attach_console_if_needed();
             eprintln!("h2o-native: {e}");
             ExitCode::FAILURE
         }
@@ -52,6 +76,8 @@ fn main() -> ExitCode {
 }
 
 fn usage_error() -> ExitCode {
+    #[cfg(windows)]
+    attach_console_if_needed();
     eprintln!("{USAGE}");
     ExitCode::from(2)
 }
