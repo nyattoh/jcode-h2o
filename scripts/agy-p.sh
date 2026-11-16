@@ -4,7 +4,7 @@ set -euo pipefail
 # Direct interactive-shell helper to run official `agy -p` inside `jcode-h2o`
 # in compliance with Google Antigravity Terms of Service.
 
-for var in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CODEX_SANDBOX CODEX_THREAD_ID CODEX_CI GEMINI_CLI JCODE_SESSION JCODE_SOCKET JCODE_API_SOCKET OPENCODE; do
+for var in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CODEX_SANDBOX CODEX_THREAD_ID CODEX_CI GEMINI_CLI JCODE_SESSION_ID JCODE_SESSION JCODE_SOCKET JCODE_API_SOCKET OPENCODE; do
   if [[ -n "${!var:-}" ]]; then
     echo "Blocked by scripts/agy-p.sh: external agent environment detected ($var). Do not invoke 'agy -p' via external agents (Antigravity ToS compliance)." >&2
     exit 2

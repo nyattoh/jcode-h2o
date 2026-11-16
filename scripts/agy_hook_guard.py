@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 
 _AGY_BIN_RE = re.compile(
@@ -15,10 +16,19 @@ _AGY_BIN_RE = re.compile(
 )
 
 _DISALLOWED_MODE_RE = re.compile(
-    r"(?:^|\s)(?:-p|--print|--prompt|-i|--prompt-interactive|acp)(?=$|\s|=)"
+    r"(?:^|[\s\"'])(?:-p|--print|--prompt|-i|--prompt-interactive|acp)(?=$|[\s=;\"'&|)])"
     r"|(?:^|[;&|(\s\"'/\\])agy-p(?:\.(?:ps1|cmd|bat|sh))?(?=$|[;&|)\s\"'])",
     re.IGNORECASE,
 )
+
+_DISALLOWED_FLAGS = frozenset({
+    "-p",
+    "--print",
+    "--prompt",
+    "-i",
+    "--prompt-interactive",
+    "acp",
+})
 
 _BLOCK_REASON = (
     "Blocked by jcode-h2o agy_hook_guard: Running `agy -p` / `agy acp` / `scripts/agy-p.*` "
@@ -57,9 +67,33 @@ def _extract_command_strings(payload: dict) -> list[str]:
     return candidates
 
 
+def _tokens_indicate_disallowed_agy(cmd: str) -> bool:
+    try:
+        tokens = shlex.split(cmd, posix=True)
+    except ValueError:
+        return False
+
+    has_agy = False
+    for tok in tokens:
+        lower = tok.strip().lower().replace("\\", "/")
+        base = lower.rsplit("/", 1)[-1]
+        if base in ("agy-p", "agy-p.ps1", "agy-p.cmd", "agy-p.bat", "agy-p.sh"):
+            return True
+        if base in ("agy", "agy.exe"):
+            has_agy = True
+            continue
+        if has_agy:
+            flag = lower.split("=", 1)[0]
+            if flag in _DISALLOWED_FLAGS:
+                return True
+    return False
+
+
 def is_disallowed_agy_command(cmd: str) -> bool:
     if not cmd:
         return False
+    if _tokens_indicate_disallowed_agy(cmd):
+        return True
     return bool(_AGY_BIN_RE.search(cmd) and _DISALLOWED_MODE_RE.search(cmd))
 
 

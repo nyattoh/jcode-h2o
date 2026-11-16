@@ -42,6 +42,7 @@ $agentEnvMarkers = @(
     "CODEX_THREAD_ID",
     "CODEX_CI",
     "GEMINI_CLI",
+    "JCODE_SESSION_ID",
     "JCODE_SESSION",
     "JCODE_SOCKET",
     "JCODE_API_SOCKET",
